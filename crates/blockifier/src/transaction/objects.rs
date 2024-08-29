@@ -513,7 +513,8 @@ impl ExecutionResourcesTraits for ExecutionResources {
     }
 
     fn prover_builtins(&self) -> HashMap<BuiltinName, usize> {
-        let mut builtins = self.builtin_instance_counter.clone();
+        let mut builtins: HashMap<BuiltinName, usize> = self
+            .builtin_instance_counter.clone().into_iter().collect();
 
         // See "total_n_steps" documentation.
         builtins.remove(&BuiltinName::segment_arena);

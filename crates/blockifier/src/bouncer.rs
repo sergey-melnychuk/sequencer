@@ -345,7 +345,7 @@ pub fn get_particia_update_resources(n_visited_storage_entries: usize) -> Execut
         // TODO(Yoni, 1/5/2024): re-estimate this.
         n_steps: 32 * n_updates,
         // For each Patricia update there are two hash calculations.
-        builtin_instance_counter: HashMap::from([(BuiltinName::pedersen, 2 * n_updates)]),
+        builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::pedersen, 2 * n_updates)]),
         n_memory_holes: 0,
     }
 }

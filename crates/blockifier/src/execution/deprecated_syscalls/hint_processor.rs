@@ -107,18 +107,36 @@ pub enum DeprecatedSyscallExecutionError {
     InvalidSyscallInput { input: Felt, info: String },
     #[error("Invalid syscall selector: {0:?}.")]
     InvalidDeprecatedSyscallSelector(Felt),
-    #[error(transparent)]
-    MathError(#[from] cairo_vm::types::errors::math_errors::MathError),
-    #[error(transparent)]
-    MemoryError(#[from] MemoryError),
+    #[error("Math error: {0}")]
+    MathError(cairo_vm::types::errors::math_errors::MathError),
+    #[error("Memory error: {0}")]
+    MemoryError(MemoryError),
     #[error(transparent)]
     StarknetApiError(#[from] StarknetApiError),
     #[error(transparent)]
     StateError(#[from] StateError),
-    #[error(transparent)]
-    VirtualMachineError(#[from] VirtualMachineError),
+    #[error("VM error: {0}")]
+    VirtualMachineError(VirtualMachineError),
     #[error("Unauthorized syscall {syscall_name} in execution mode {execution_mode}.")]
     InvalidSyscallInExecutionMode { syscall_name: String, execution_mode: ExecutionMode },
+}
+
+impl From<VirtualMachineError> for DeprecatedSyscallExecutionError {
+    fn from(error: VirtualMachineError) -> Self {
+        Self::VirtualMachineError(error)
+    }
+}
+
+impl From<cairo_vm::types::errors::math_errors::MathError> for DeprecatedSyscallExecutionError {
+    fn from(error: cairo_vm::types::errors::math_errors::MathError) -> Self {
+        Self::MathError(error)
+    }
+}
+
+impl From<MemoryError> for DeprecatedSyscallExecutionError {
+    fn from(error: MemoryError) -> Self {
+        Self::MemoryError(error)
+    }
 }
 
 // Needed for custom hint implementations (in our case, syscall hints) which must comply with the
@@ -260,7 +278,7 @@ impl<'a> DeprecatedSyscallHintProcessor<'a> {
         ids_data: &HashMap<String, HintReference>,
         ap_tracking: &ApTracking,
     ) -> HintExecutionResult {
-        let initial_syscall_ptr = get_ptr_from_var_name("syscall_ptr", vm, ids_data, ap_tracking)?;
+        let initial_syscall_ptr = get_ptr_from_var_name("syscall_ptr", vm, &ids_data.clone().into_iter().collect(), ap_tracking)?;
         self.verify_syscall_ptr(initial_syscall_ptr)?;
 
         let selector = DeprecatedSyscallSelector::try_from(self.read_next_syscall_selector(vm)?)?;
@@ -454,11 +472,11 @@ impl HintProcessorLogic for DeprecatedSyscallHintProcessor<'_> {
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
         hint_data: &Box<dyn Any>,
-        constants: &HashMap<String, Felt>,
+        constants: &hashbrown::HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<HintProcessorData>().ok_or(HintError::WrongHintData)?;
         if hint_code::SYSCALL_HINTS.contains(hint.code.as_str()) {
-            return self.execute_next_syscall(vm, &hint.ids_data, &hint.ap_tracking);
+            return self.execute_next_syscall(vm, &hint.ids_data.clone().into_iter().collect(), &hint.ap_tracking);
         }
 
         self.builtin_hint_processor.execute_hint(vm, exec_scopes, hint_data, constants)

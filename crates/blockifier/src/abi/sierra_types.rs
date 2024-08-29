@@ -19,14 +19,26 @@ pub type SierraTypeResult<T> = Result<T, SierraTypeError>;
 pub enum SierraTypeError {
     #[error("Felt {val} is too big to convert to '{ty}'.")]
     ValueTooLargeForType { val: Felt, ty: &'static str },
-    #[error(transparent)]
-    MemoryError(#[from] MemoryError),
-    #[error(transparent)]
-    MathError(#[from] MathError),
+    #[error("Memory error: {0}")]
+    MemoryError(MemoryError),
+    #[error("Math error: {0}")]
+    MathError(MathError),
     #[error(transparent)]
     StateError(#[from] StateError),
     #[error(transparent)]
     StarknetApiError(#[from] StarknetApiError),
+}
+
+impl From<MemoryError> for SierraTypeError {
+    fn from(error: MemoryError) -> Self {
+        Self::MemoryError(error)
+    }
+}
+
+impl From<MathError> for SierraTypeError {
+    fn from(error: MathError) -> Self {
+        Self::MathError(error)
+    }
 }
 
 pub trait SierraType: Sized {

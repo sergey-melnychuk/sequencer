@@ -114,20 +114,38 @@ pub enum SyscallExecutionError {
     InvalidSyscallSelector(Felt),
     #[error("Unauthorized syscall {syscall_name} in execution mode {execution_mode}.")]
     InvalidSyscallInExecutionMode { syscall_name: String, execution_mode: ExecutionMode },
-    #[error(transparent)]
-    MathError(#[from] cairo_vm::types::errors::math_errors::MathError),
-    #[error(transparent)]
-    MemoryError(#[from] MemoryError),
+    #[error("Meth error: {0}")]
+    MathError(cairo_vm::types::errors::math_errors::MathError),
+    #[error("Memory error: {0}")]
+    MemoryError(MemoryError),
     #[error(transparent)]
     SierraTypeError(#[from] SierraTypeError),
     #[error(transparent)]
     StarknetApiError(#[from] StarknetApiError),
     #[error(transparent)]
     StateError(#[from] StateError),
-    #[error(transparent)]
-    VirtualMachineError(#[from] VirtualMachineError),
+    #[error("VM error: {0}")]
+    VirtualMachineError(VirtualMachineError),
     #[error("Syscall error.")]
     SyscallError { error_data: Vec<Felt> },
+}
+
+impl From<cairo_vm::types::errors::math_errors::MathError> for SyscallExecutionError {
+    fn from(error: cairo_vm::types::errors::math_errors::MathError) -> Self {
+        Self::MathError(error)
+    }
+}
+
+impl From<MemoryError> for SyscallExecutionError {
+    fn from(error: MemoryError) -> Self {
+        Self::MemoryError(error)
+    }
+}
+
+impl From<VirtualMachineError> for SyscallExecutionError {
+    fn from(error: VirtualMachineError) -> Self {
+        Self::VirtualMachineError(error)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -743,7 +761,7 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
         hint_data: &Box<dyn Any>,
-        _constants: &HashMap<String, Felt>,
+        _constants: &hashbrown::HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<Hint>().ok_or(HintError::WrongHintData)?;
         match hint {
@@ -757,7 +775,7 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         &self,
         hint_code: &str,
         _ap_tracking_data: &ApTracking,
-        _reference_ids: &HashMap<String, usize>,
+        _reference_ids: &hashbrown::HashMap<String, usize>,
         _references: &[HintReference],
     ) -> Result<Box<dyn Any>, VirtualMachineError> {
         Ok(Box::new(self.hints[hint_code].clone()))

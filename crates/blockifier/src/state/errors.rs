@@ -17,8 +17,8 @@ pub enum StateError {
     OldBlockHashNotProvided,
     #[error("Cannot deploy contract at address 0.")]
     OutOfRangeContractAddress,
-    #[error(transparent)]
-    ProgramError(#[from] ProgramError),
+    #[error("Program error: {0}")]
+    ProgramError(ProgramError),
     #[error("Requested {0:?} is unavailable for deployment.")]
     UnavailableContractAddress(ContractAddress),
     #[error("Class with hash {:#064x} is not declared.", **.0)]
@@ -28,4 +28,10 @@ pub enum StateError {
     /// Represents all unexpected errors that may occur while reading from state.
     #[error("Failed to read from state: {0}.")]
     StateReadError(String),
+}
+
+impl From<ProgramError> for StateError {
+    fn from(error: ProgramError) -> Self {
+        Self::ProgramError(error)
+    }
 }

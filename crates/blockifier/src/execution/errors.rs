@@ -31,15 +31,15 @@ pub enum PreExecutionError {
     InvalidBuiltin(BuiltinName),
     #[error("The constructor entry point must be named 'constructor'.")]
     InvalidConstructorEntryPointName,
-    #[error(transparent)]
-    MathError(#[from] MathError),
-    #[error(transparent)]
-    MemoryError(#[from] MemoryError),
+    #[error("Math error: {0}")]
+    MathError(MathError),
+    #[error("Memory error: {0}")]
+    MemoryError(MemoryError),
     #[error("No entry points of type {0:?} found in contract.")]
     NoEntryPointOfTypeFound(EntryPointType),
-    #[error(transparent)]
-    ProgramError(#[from] cairo_vm::types::errors::program_errors::ProgramError),
-    #[error(transparent)]
+    #[error("Program error: {0}")]
+    ProgramError(cairo_vm::types::errors::program_errors::ProgramError),
+    #[error("Runner error: {0}")]
     RunnerError(Box<RunnerError>),
     #[error(transparent)]
     StateError(#[from] StateError),
@@ -47,6 +47,24 @@ pub enum PreExecutionError {
     UninitializedStorageAddress(ContractAddress),
     #[error("Called builtins: {0:?} are unsupported in a Cairo0 contract")]
     UnsupportedCairo0Builtin(HashSet<BuiltinName>),
+}
+
+impl From<MathError> for PreExecutionError {
+    fn from(error: MathError) -> Self {
+        Self::MathError(error)
+    }
+}
+
+impl From<MemoryError> for PreExecutionError {
+    fn from(error: MemoryError) -> Self {
+        Self::MemoryError(error)
+    }
+}
+
+impl From<cairo_vm::types::errors::program_errors::ProgramError> for PreExecutionError {
+    fn from(error: cairo_vm::types::errors::program_errors::ProgramError) -> Self {
+        Self::ProgramError(error)
+    }
 }
 
 impl From<RunnerError> for PreExecutionError {
@@ -57,18 +75,36 @@ impl From<RunnerError> for PreExecutionError {
 
 #[derive(Debug, Error)]
 pub enum PostExecutionError {
-    #[error(transparent)]
-    MathError(#[from] cairo_vm::types::errors::math_errors::MathError),
-    #[error(transparent)]
-    MemoryError(#[from] MemoryError),
+    #[error("Math error: {0}")]
+    MathError(cairo_vm::types::errors::math_errors::MathError),
+    #[error("Memory error: {0}")]
+    MemoryError(MemoryError),
     #[error(transparent)]
     RetdataSizeTooBig(#[from] TryFromBigIntError<BigInt>),
     #[error("Validation failed: {0}.")]
     SecurityValidationError(String),
-    #[error(transparent)]
-    VirtualMachineError(#[from] VirtualMachineError),
+    #[error("VM error: {0}")]
+    VirtualMachineError(VirtualMachineError),
     #[error("Malformed return data : {error_message}.")]
     MalformedReturnData { error_message: String },
+}
+
+impl From<cairo_vm::types::errors::math_errors::MathError> for PostExecutionError {
+    fn from(error: cairo_vm::types::errors::math_errors::MathError) -> Self {
+        Self::MathError(error)
+    }
+}
+
+impl From<MemoryError> for PostExecutionError {
+    fn from(error: MemoryError) -> Self {
+        Self::MemoryError(error)
+    }
+}
+
+impl From<VirtualMachineError> for PostExecutionError {
+    fn from(error: VirtualMachineError) -> Self {
+        Self::VirtualMachineError(error)
+    }
 }
 
 impl From<RunnerError> for PostExecutionError {
@@ -79,8 +115,8 @@ impl From<RunnerError> for PostExecutionError {
 
 #[derive(Debug, Error)]
 pub enum EntryPointExecutionError {
-    #[error(transparent)]
-    CairoRunError(#[from] CairoRunError),
+    #[error("Cairo run error: {0}")]
+    CairoRunError(CairoRunError),
     #[error("Execution failed. Failure reason: {}.", format_panic_data(.error_data))]
     ExecutionFailed { error_data: Vec<Felt> },
     #[error("Internal error: {0}")]
@@ -95,8 +131,20 @@ pub enum EntryPointExecutionError {
     RecursionDepthExceeded,
     #[error(transparent)]
     StateError(#[from] StateError),
-    #[error(transparent)]
-    TraceError(#[from] TraceError),
+    #[error("Trace error: {0}")]
+    TraceError(TraceError),
+}
+
+impl From<CairoRunError> for EntryPointExecutionError {
+    fn from(error: CairoRunError) -> Self {
+        Self::CairoRunError(error)
+    }
+}
+
+impl From<TraceError> for EntryPointExecutionError {
+    fn from(error: TraceError) -> Self {
+        Self::TraceError(error)
+    }
 }
 
 #[derive(Debug, Error)]

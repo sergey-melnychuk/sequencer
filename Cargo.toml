@@ -69,12 +69,22 @@ byteorder = "1.4.3"
 bytes = "1"
 cached = "0.44.0"
 cairo-felt = "0.9.1"
-cairo-lang-casm = "2.7.0"
-cairo-lang-runner = "2.7.0"
-cairo-lang-sierra = "=2.7.0"
-cairo-lang-starknet-classes = "2.7.0"
-cairo-lang-utils = "2.7.0"
-cairo-vm = "=1.0.1"
+
+#cairo-lang-casm = "2.7.0"
+#cairo-lang-runner = "2.7.0"
+#cairo-lang-sierra = "=2.7.0"
+#cairo-lang-starknet-classes = "2.7.0"
+#cairo-lang-utils = "2.7.0"
+
+cairo-lang-casm = { git = "https://github.com/sergey-melnychuk/cairo.git", branch = "beerus-wasm" }
+cairo-lang-runner = { git = "https://github.com/sergey-melnychuk/cairo.git", branch = "beerus-wasm" }
+cairo-lang-sierra = { git = "https://github.com/sergey-melnychuk/cairo.git", branch = "beerus-wasm" }
+cairo-lang-starknet-classes = { git = "https://github.com/sergey-melnychuk/cairo.git", branch = "beerus-wasm" }
+cairo-lang-utils = { git = "https://github.com/sergey-melnychuk/cairo.git", branch = "beerus-wasm" }
+
+#cairo-vm = { version = "=1.0.1", default-features = false }
+cairo-vm = { git = "https://github.com/sergey-melnychuk/cairo-vm.git", branch = "beerus-wasm", version = "=1.0.1", default-features = false }
+
 camelpaste = "0.1.0"
 chrono = "0.4.26"
 clap = "4.5.4"

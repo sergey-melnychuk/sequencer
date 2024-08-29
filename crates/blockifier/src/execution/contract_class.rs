@@ -130,7 +130,7 @@ impl ContractClassV0 {
         ExecutionResources {
             n_steps,
             n_memory_holes: 0,
-            builtin_instance_counter: HashMap::from([(BuiltinName::pedersen, hashed_data_size)]),
+            builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::pedersen, hashed_data_size)]),
         }
     }
 
@@ -259,7 +259,7 @@ pub fn estimate_casm_hash_computation_resources(
             &ExecutionResources {
                 n_steps: 474,
                 n_memory_holes: 0,
-                builtin_instance_counter: HashMap::from([(BuiltinName::poseidon, 10)]),
+                builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::poseidon, 10)]),
             } + &poseidon_hash_many_cost(*length)
         }
         NestedIntList::Node(segments) => {
@@ -267,12 +267,12 @@ pub fn estimate_casm_hash_computation_resources(
             let mut execution_resources = ExecutionResources {
                 n_steps: 491,
                 n_memory_holes: 0,
-                builtin_instance_counter: HashMap::from([(BuiltinName::poseidon, 11)]),
+                builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::poseidon, 11)]),
             };
             let base_segment_cost = ExecutionResources {
                 n_steps: 24,
                 n_memory_holes: 1,
-                builtin_instance_counter: HashMap::from([(BuiltinName::poseidon, 1)]),
+                builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::poseidon, 1)]),
             };
             for segment in segments {
                 let NestedIntList::Leaf(length) = segment else {
@@ -366,7 +366,7 @@ impl TryFrom<CasmContractClass> for ContractClassV1 {
             .map(|x| MaybeRelocatable::from(Felt::from(x.value)))
             .collect();
 
-        let mut hints: HashMap<usize, Vec<HintParams>> = HashMap::new();
+        let mut hints: hashbrown::HashMap<usize, Vec<HintParams>> = hashbrown::HashMap::new();
         for (i, hint_list) in class.hints.iter() {
             let hint_params: Result<Vec<HintParams>, ProgramError> =
                 hint_list.iter().map(hint_to_hint_params).collect();
@@ -385,7 +385,7 @@ impl TryFrom<CasmContractClass> for ContractClassV1 {
         let builtins = vec![]; // The builtins are initialize later.
         let main = Some(0);
         let reference_manager = ReferenceManager { references: Vec::new() };
-        let identifiers = HashMap::new();
+        let identifiers = hashbrown::HashMap::new();
         let error_message_attributes = vec![];
         let instruction_locations = None;
 
@@ -447,7 +447,7 @@ fn hint_to_hint_params(hint: &cairo_lang_casm::hints::Hint) -> Result<HintParams
         accessible_scopes: vec![],
         flow_tracking_data: FlowTrackingData {
             ap_tracking: ApTracking::new(),
-            reference_ids: HashMap::new(),
+            reference_ids: hashbrown::HashMap::new(),
         },
     })
 }
