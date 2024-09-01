@@ -1,7 +1,8 @@
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use derive_more::IntoIterator;
+use futures::lock::Mutex;
 use indexmap::IndexMap;
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
@@ -30,36 +31,36 @@ pub struct CachedState<S: StateReader> {
     pub state: S,
     // Invariant: read/write access is managed by CachedState.
     // Using interior mutability to update caches during `State`'s immutable getters.
-    pub(crate) cache: RefCell<StateCache>,
-    pub(crate) class_hash_to_class: RefCell<ContractClassMapping>,
+    pub(crate) cache: Arc<Mutex<StateCache>>,
+    pub(crate) class_hash_to_class: Arc<Mutex<ContractClassMapping>>,
     /// A map from class hash to the set of PC values that were visited in the class.
     pub visited_pcs: HashMap<ClassHash, HashSet<usize>>,
 }
 
-impl<S: StateReader> CachedState<S> {
+impl<S: StateReader + Send + Sync> CachedState<S> {
     pub fn new(state: S) -> Self {
         Self {
             state,
-            cache: RefCell::new(StateCache::default()),
-            class_hash_to_class: RefCell::new(HashMap::default()),
+            cache: Arc::new(Mutex::new(StateCache::default())),
+            class_hash_to_class: Arc::new(Mutex::new(HashMap::default())),
             visited_pcs: HashMap::default(),
         }
     }
 
     /// Returns the state diff resulting from the performed writes, with respect to the parent
     /// state.
-    pub fn to_state_diff(&mut self) -> StateResult<StateMaps> {
-        self.update_initial_values_of_write_only_access()?;
-        Ok(self.cache.borrow().to_state_diff())
+    pub async fn to_state_diff(&mut self) -> StateResult<StateMaps> {
+        self.update_initial_values_of_write_only_access().await?;
+        Ok(self.cache.lock().await.to_state_diff())
     }
 
     // TODO(Yoni, 1/8/2024): remove this function.
     /// Returns the state changes made on this state.
-    pub fn get_actual_state_changes(&mut self) -> StateResult<StateChanges> {
-        Ok(self.to_state_diff()?.into())
+    pub async fn get_actual_state_changes(&mut self) -> StateResult<StateChanges> {
+        Ok(self.to_state_diff().await?.into())
     }
 
-    pub fn update_cache(
+    pub async fn update_cache(
         &mut self,
         write_updates: &StateMaps,
         local_contract_cache_updates: ContractClassMapping,
@@ -68,12 +69,11 @@ impl<S: StateReader> CachedState<S> {
         for (&key, &value) in &write_updates.declared_contracts {
             assert_eq!(value, local_contract_cache_updates.contains_key(&key));
         }
-        let mut cache = self.cache.borrow_mut();
-        cache.writes.extend(write_updates);
-        self.class_hash_to_class.get_mut().extend(local_contract_cache_updates);
+        self.cache.lock().await.writes.extend(write_updates);
+        self.class_hash_to_class.lock().await.extend(local_contract_cache_updates);
     }
 
-    pub fn update_visited_pcs_cache(&mut self, visited_pcs: &HashMap<ClassHash, HashSet<usize>>) {
+    pub async fn update_visited_pcs_cache(&mut self, visited_pcs: &HashMap<ClassHash, HashSet<usize>>) {
         for (class_hash, class_visited_pcs) in visited_pcs {
             self.add_visited_pcs(*class_hash, class_visited_pcs);
         }
@@ -90,8 +90,8 @@ impl<S: StateReader> CachedState<S> {
     ///     `get_compiled_contract_class`.
     ///
     /// TODO(Noa, 30/07/23): Consider adding DB getters in bulk (via a DB read transaction).
-    fn update_initial_values_of_write_only_access(&mut self) -> StateResult<()> {
-        let cache = &mut *self.cache.borrow_mut();
+    async fn update_initial_values_of_write_only_access(&mut self) -> StateResult<()> {
+        let cache = &mut *self.cache.lock().await;
 
         // Eliminate storage writes that are identical to the initial value (no change).
         for contract_storage_key in cache.writes.storage.keys() {
@@ -99,7 +99,7 @@ impl<S: StateReader> CachedState<S> {
                 // First access to this cell was write; cache initial value.
                 cache.initial_reads.storage.insert(
                     *contract_storage_key,
-                    self.state.get_storage_at(contract_storage_key.0, contract_storage_key.1)?,
+                    self.state.get_storage_at(contract_storage_key.0, contract_storage_key.1).await?,
                 );
             }
         }
@@ -107,36 +107,40 @@ impl<S: StateReader> CachedState<S> {
     }
 }
 
-impl<S: StateReader> UpdatableState for CachedState<S> {
-    fn apply_writes(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: StateReader + Send + Sync> UpdatableState for CachedState<S> {
+    async fn apply_writes(
         &mut self,
         writes: &StateMaps,
         class_hash_to_class: &ContractClassMapping,
         visited_pcs: &HashMap<ClassHash, HashSet<usize>>,
     ) {
         // TODO(Noa,15/5/24): Reconsider the clone.
-        self.update_cache(writes, class_hash_to_class.clone());
-        self.update_visited_pcs_cache(visited_pcs);
+        self.update_cache(writes, class_hash_to_class.clone()).await;
+        self.update_visited_pcs_cache(visited_pcs).await;
     }
 }
 
 #[cfg(any(feature = "testing", test))]
-impl<S: StateReader> From<S> for CachedState<S> {
+impl<S: StateReader + Send + Sync> From<S> for CachedState<S> {
     fn from(state_reader: S) -> Self {
         CachedState::new(state_reader)
     }
 }
 
-impl<S: StateReader> StateReader for CachedState<S> {
-    fn get_storage_at(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: StateReader + Send + Sync> StateReader for CachedState<S> {
+    async fn get_storage_at(
         &self,
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
-        let mut cache = self.cache.borrow_mut();
+        let mut cache = self.cache.lock().await;
 
         if cache.get_storage_at(contract_address, key).is_none() {
-            let storage_value = self.state.get_storage_at(contract_address, key)?;
+            let storage_value = self.state.get_storage_at(contract_address, key).await?;
             cache.set_storage_initial_value(contract_address, key, storage_value);
         }
 
@@ -146,11 +150,11 @@ impl<S: StateReader> StateReader for CachedState<S> {
         Ok(*value)
     }
 
-    fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
-        let mut cache = self.cache.borrow_mut();
+    async fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
+        let mut cache = self.cache.lock().await;
 
         if cache.get_nonce_at(contract_address).is_none() {
-            let nonce = self.state.get_nonce_at(contract_address)?;
+            let nonce = self.state.get_nonce_at(contract_address).await?;
             cache.set_nonce_initial_value(contract_address, nonce);
         }
 
@@ -161,11 +165,11 @@ impl<S: StateReader> StateReader for CachedState<S> {
         Ok(*nonce)
     }
 
-    fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
-        let mut cache = self.cache.borrow_mut();
+    async fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
+        let mut cache = self.cache.lock().await;
 
         if cache.get_class_hash_at(contract_address).is_none() {
-            let class_hash = self.state.get_class_hash_at(contract_address)?;
+            let class_hash = self.state.get_class_hash_at(contract_address).await?;
             cache.set_class_hash_initial_value(contract_address, class_hash);
         }
 
@@ -175,14 +179,12 @@ impl<S: StateReader> StateReader for CachedState<S> {
         Ok(*class_hash)
     }
 
-    fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
-        let mut cache = self.cache.borrow_mut();
-        let class_hash_to_class = &mut *self.class_hash_to_class.borrow_mut();
-
+    async fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
         if let std::collections::hash_map::Entry::Vacant(vacant_entry) =
-            class_hash_to_class.entry(class_hash)
+            self.class_hash_to_class.lock().await.entry(class_hash)
         {
-            match self.state.get_compiled_contract_class(class_hash) {
+            let mut cache = self.cache.lock().await;
+            match self.state.get_compiled_contract_class(class_hash).await {
                 Err(StateError::UndeclaredClassHash(class_hash)) => {
                     cache.set_declared_contract_initial_values(class_hash, false);
                     cache.set_compiled_class_hash_initial_value(
@@ -199,7 +201,7 @@ impl<S: StateReader> StateReader for CachedState<S> {
             }
         }
 
-        let contract_class = class_hash_to_class
+        let contract_class = self.class_hash_to_class.lock().await
             .get(&class_hash)
             .cloned()
             .expect("The class hash must appear in the cache.");
@@ -207,11 +209,11 @@ impl<S: StateReader> StateReader for CachedState<S> {
         Ok(contract_class)
     }
 
-    fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
-        let mut cache = self.cache.borrow_mut();
+    async fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
+        let mut cache = self.cache.lock().await;
 
         if cache.get_compiled_class_hash(class_hash).is_none() {
-            let compiled_class_hash = self.state.get_compiled_class_hash(class_hash)?;
+            let compiled_class_hash = self.state.get_compiled_class_hash(class_hash).await?;
             cache.set_compiled_class_hash_initial_value(class_hash, compiled_class_hash);
         }
 
@@ -222,27 +224,27 @@ impl<S: StateReader> StateReader for CachedState<S> {
     }
 }
 
-impl<S: StateReader> State for CachedState<S> {
-    fn set_storage_at(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: StateReader + Send + Sync> State for CachedState<S> {
+    async fn set_storage_at(
         &mut self,
         contract_address: ContractAddress,
         key: StorageKey,
         value: Felt,
     ) -> StateResult<()> {
-        self.cache.get_mut().set_storage_value(contract_address, key, value);
-
+        self.cache.lock().await.set_storage_value(contract_address, key, value);
         Ok(())
     }
 
-    fn increment_nonce(&mut self, contract_address: ContractAddress) -> StateResult<()> {
-        let current_nonce = self.get_nonce_at(contract_address)?;
+    async fn increment_nonce(&mut self, contract_address: ContractAddress) -> StateResult<()> {
+        let current_nonce = self.get_nonce_at(contract_address).await?;
         let next_nonce = Nonce(current_nonce.0 + Felt::ONE);
-        self.cache.get_mut().set_nonce_value(contract_address, next_nonce);
-
+        self.cache.lock().await.set_nonce_value(contract_address, next_nonce);
         Ok(())
     }
 
-    fn set_class_hash_at(
+    async fn set_class_hash_at(
         &mut self,
         contract_address: ContractAddress,
         class_hash: ClassHash,
@@ -250,32 +252,30 @@ impl<S: StateReader> State for CachedState<S> {
         if contract_address == ContractAddress::default() {
             return Err(StateError::OutOfRangeContractAddress);
         }
-
-        self.cache.get_mut().set_class_hash_write(contract_address, class_hash);
+        self.cache.lock().await.set_class_hash_write(contract_address, class_hash);
         Ok(())
     }
 
-    fn set_contract_class(
+    async fn set_contract_class(
         &mut self,
         class_hash: ClassHash,
         contract_class: ContractClass,
     ) -> StateResult<()> {
-        self.class_hash_to_class.get_mut().insert(class_hash, contract_class);
-        let mut cache = self.cache.borrow_mut();
-        cache.declare_contract(class_hash);
+        self.class_hash_to_class.lock().await.insert(class_hash, contract_class);
+        self.cache.lock().await.declare_contract(class_hash);
         Ok(())
     }
 
-    fn set_compiled_class_hash(
+    async fn set_compiled_class_hash(
         &mut self,
         class_hash: ClassHash,
         compiled_class_hash: CompiledClassHash,
     ) -> StateResult<()> {
-        self.cache.get_mut().set_compiled_class_hash_write(class_hash, compiled_class_hash);
+        self.cache.lock().await.set_compiled_class_hash_write(class_hash, compiled_class_hash);
         Ok(())
     }
 
-    fn add_visited_pcs(&mut self, class_hash: ClassHash, pcs: &HashSet<usize>) {
+    async fn add_visited_pcs(&mut self, class_hash: ClassHash, pcs: &HashSet<usize>) {
         self.visited_pcs.entry(class_hash).or_default().extend(pcs);
     }
 }
@@ -478,35 +478,37 @@ impl<'a, S: StateReader + ?Sized> MutRefState<'a, S> {
 }
 
 /// Proxies inner object to expose `State` functionality.
-impl<'a, S: StateReader + ?Sized> StateReader for MutRefState<'a, S> {
-    fn get_storage_at(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<'a, S: StateReader + Send + Sync + ?Sized> StateReader for MutRefState<'a, S> {
+    async fn get_storage_at(
         &self,
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
-        self.0.get_storage_at(contract_address, key)
+        self.0.get_storage_at(contract_address, key).await
     }
 
-    fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
-        self.0.get_nonce_at(contract_address)
+    async fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
+        self.0.get_nonce_at(contract_address).await
     }
 
-    fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
-        self.0.get_class_hash_at(contract_address)
+    async fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
+        self.0.get_class_hash_at(contract_address).await
     }
 
-    fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
-        self.0.get_compiled_contract_class(class_hash)
+    async fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
+        self.0.get_compiled_contract_class(class_hash).await
     }
 
-    fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
-        self.0.get_compiled_class_hash(class_hash)
+    async fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
+        self.0.get_compiled_class_hash(class_hash).await
     }
 }
 
 pub type TransactionalState<'a, U> = CachedState<MutRefState<'a, U>>;
 
-impl<'a, S: StateReader> TransactionalState<'a, S> {
+impl<'a, S: StateReader + Send + Sync> TransactionalState<'a, S> {
     /// Creates a transactional instance from the given updatable state.
     /// It allows performing buffered modifying actions on the given state, which
     /// will either all happen (will be updated in the state and committed)
@@ -520,16 +522,17 @@ impl<'a, S: StateReader> TransactionalState<'a, S> {
 }
 
 /// Adds the ability to perform a transactional execution.
-impl<'a, U: UpdatableState> TransactionalState<'a, U> {
+impl<'a, U: UpdatableState + Send + Sync> TransactionalState<'a, U> {
     /// Commits changes in the child (wrapping) state to its parent.
-    pub fn commit(self) {
+    pub async fn commit(self) {
         let state = self.state.0;
-        let child_cache = self.cache.into_inner();
+        let child_cache = self.cache.lock().await;
+        let class_hash_to_class = self.class_hash_to_class.lock().await;
         state.apply_writes(
             &child_cache.writes,
-            &self.class_hash_to_class.into_inner(),
+            &class_hash_to_class,
             &self.visited_pcs,
-        )
+        ).await
     }
 }
 

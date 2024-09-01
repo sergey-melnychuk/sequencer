@@ -41,7 +41,7 @@ pub struct ExecutionTaskOutput {
     pub result: TransactionExecutionResult<TransactionExecutionInfo>,
 }
 
-pub struct WorkerExecutor<'a, S: StateReader> {
+pub struct WorkerExecutor<'a, S: StateReader + Send + Sync> {
     pub scheduler: Scheduler,
     pub state: ThreadSafeVersionedState<S>,
     pub chunk: &'a [Transaction],
@@ -49,7 +49,8 @@ pub struct WorkerExecutor<'a, S: StateReader> {
     pub block_context: &'a BlockContext,
     pub bouncer: Mutex<&'a mut Bouncer>,
 }
-impl<'a, S: StateReader> WorkerExecutor<'a, S> {
+
+impl<'a, S: StateReader + Send + Sync> WorkerExecutor<'a, S> {
     pub fn new(
         state: ThreadSafeVersionedState<S>,
         chunk: &'a [Transaction],
@@ -86,7 +87,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
         }
     }
 
-    pub fn run(&self) {
+    pub async fn run(&self) {
         let mut task = Task::AskForTask;
         loop {
             self.commit_while_possible();
@@ -95,7 +96,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
                     self.execute(tx_index);
                     Task::AskForTask
                 }
-                Task::ValidationTask(tx_index) => self.validate(tx_index),
+                Task::ValidationTask(tx_index) => self.validate(tx_index).await,
                 Task::NoTaskAvailable => {
                     // There's no available task at the moment; sleep for a bit to save CPU power.
                     // (since busy-looping might damage performance when using hyper-threads).
@@ -108,10 +109,10 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
         }
     }
 
-    fn commit_while_possible(&self) {
+    async fn commit_while_possible(&self) {
         if let Some(mut transaction_committer) = self.scheduler.try_enter_commit_phase() {
             while let Some(tx_index) = transaction_committer.try_commit() {
-                let commit_succeeded = self.commit_tx(tx_index);
+                let commit_succeeded = self.commit_tx(tx_index).await;
                 if !commit_succeeded {
                     transaction_committer.halt_scheduler();
                 }
@@ -124,7 +125,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
         self.scheduler.finish_execution(tx_index)
     }
 
-    fn execute_tx(&self, tx_index: TxIndex) {
+    async fn execute_tx(&self, tx_index: TxIndex) {
         let mut tx_versioned_state = self.state.pin_version(tx_index);
         let tx = &self.chunk[tx_index];
         let mut transactional_state =
@@ -132,29 +133,29 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
         let execution_flags =
             ExecutionFlags { charge_fee: true, validate: true, concurrency_mode: true };
         let execution_result =
-            tx.execute_raw(&mut transactional_state, self.block_context, execution_flags);
+            tx.execute_raw(&mut transactional_state, self.block_context, execution_flags).await;
 
         if execution_result.is_ok() {
             // TODO(Noa, 15/05/2024): use `tx_versioned_state` when we add support to transactional
             // versioned state.
             self.state.pin_version(tx_index).apply_writes(
-                &transactional_state.cache.borrow().writes,
-                &transactional_state.class_hash_to_class.borrow(),
+                &transactional_state.cache.lock().await.writes,
+                &*transactional_state.class_hash_to_class.lock().await,
                 &HashMap::default(),
             );
         }
 
         // Write the transaction execution outputs.
-        let tx_reads_writes = transactional_state.cache.take();
-        let class_hash_to_class = transactional_state.class_hash_to_class.take();
+        let tx_reads_writes = transactional_state.cache.lock().await;
+        let class_hash_to_class = transactional_state.class_hash_to_class.lock().await;
         // In case of a failed transaction, we don't record its writes and visited pcs.
         let (writes, contract_classes, visited_pcs) = match execution_result {
-            Ok(_) => (tx_reads_writes.writes, class_hash_to_class, transactional_state.visited_pcs),
+            Ok(_) => (tx_reads_writes.writes.to_owned(), class_hash_to_class.to_owned(), transactional_state.visited_pcs.to_owned()),
             Err(_) => (StateMaps::default(), HashMap::default(), HashMap::default()),
         };
         let mut execution_output = lock_mutex_in_array(&self.execution_outputs, tx_index);
         *execution_output = Some(ExecutionTaskOutput {
-            reads: tx_reads_writes.initial_reads,
+            reads: tx_reads_writes.initial_reads.to_owned(),
             writes,
             contract_classes,
             visited_pcs,
@@ -162,12 +163,12 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
         });
     }
 
-    fn validate(&self, tx_index: TxIndex) -> Task {
+    async fn validate(&self, tx_index: TxIndex) -> Task {
         let tx_versioned_state = self.state.pin_version(tx_index);
         let execution_output = lock_mutex_in_array(&self.execution_outputs, tx_index);
         let execution_output = execution_output.as_ref().expect(EXECUTION_OUTPUTS_UNWRAP_ERROR);
         let reads = &execution_output.reads;
-        let reads_valid = tx_versioned_state.validate_reads(reads);
+        let reads_valid = tx_versioned_state.validate_reads(reads).await;
 
         let aborted = !reads_valid && self.scheduler.try_validation_abort(tx_index);
         if aborted {
@@ -191,13 +192,13 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
     ///         - Else (no room), do not commit. The block should be closed without the transaction.
     ///     * Else (execution failed), commit the transaction without fixing the call info or
     ///       updating the sequencer balance.
-    fn commit_tx(&self, tx_index: TxIndex) -> bool {
+    async fn commit_tx(&self, tx_index: TxIndex) -> bool {
         let execution_output = lock_mutex_in_array(&self.execution_outputs, tx_index);
         let execution_output_ref = execution_output.as_ref().expect(EXECUTION_OUTPUTS_UNWRAP_ERROR);
         let reads = &execution_output_ref.reads;
 
         let mut tx_versioned_state = self.state.pin_version(tx_index);
-        let reads_valid = tx_versioned_state.validate_reads(reads);
+        let reads_valid = tx_versioned_state.validate_reads(reads).await;
 
         // First, re-validate the transaction.
         if !reads_valid {
@@ -215,7 +216,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
             let execution_output = lock_mutex_in_array(&self.execution_outputs, tx_index);
             let read_set = &execution_output.as_ref().expect(EXECUTION_OUTPUTS_UNWRAP_ERROR).reads;
             // Another validation after the re-execution for sanity check.
-            assert!(tx_versioned_state.validate_reads(read_set));
+            assert!(tx_versioned_state.validate_reads(read_set).await);
         } else {
             // Release the execution output lock, since it is has been released in the other flow.
             drop(execution_output);
@@ -244,7 +245,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
                 &tx_state_changes_keys,
                 &tx_execution_info.summarize(),
                 &tx_execution_info.transaction_receipt.resources,
-            );
+            ).await;
             if let Err(error) = bouncer_result {
                 match error {
                     TransactionExecutorError::BlockFull => return false,
@@ -263,7 +264,7 @@ impl<'a, S: StateReader> WorkerExecutor<'a, S> {
     }
 }
 
-impl<'a, U: UpdatableState> WorkerExecutor<'a, U> {
+impl<'a, U: UpdatableState + Send + Sync> WorkerExecutor<'a, U> {
     pub fn commit_chunk_and_recover_block_state(
         self,
         n_committed_txs: usize,

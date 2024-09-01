@@ -44,7 +44,7 @@ impl From<MathError> for SierraTypeError {
 pub trait SierraType: Sized {
     fn from_memory(vm: &VirtualMachine, ptr: &mut Relocatable) -> SierraTypeResult<Self>;
 
-    fn from_storage(
+    async fn from_storage(
         state: &dyn StateReader,
         contract_address: &ContractAddress,
         key: &StorageKey,
@@ -84,12 +84,12 @@ impl SierraType for SierraU128 {
         Ok(Self { val: felt_to_u128(&felt)? })
     }
 
-    fn from_storage(
+    async fn from_storage(
         state: &dyn StateReader,
         contract_address: &ContractAddress,
         key: &StorageKey,
     ) -> SierraTypeResult<Self> {
-        let felt = state.get_storage_at(*contract_address, *key)?;
+        let felt = state.get_storage_at(*contract_address, *key).await?;
         Ok(Self { val: felt_to_u128(&felt)? })
     }
 }
@@ -117,14 +117,14 @@ impl SierraType for SierraU256 {
         })
     }
 
-    fn from_storage(
+    async fn from_storage(
         state: &dyn StateReader,
         contract_address: &ContractAddress,
         key: &StorageKey,
     ) -> SierraTypeResult<Self> {
-        let low_val = SierraU128::from_storage(state, contract_address, key)?;
+        let low_val = SierraU128::from_storage(state, contract_address, key).await?;
         let high_key = next_storage_key(key)?;
-        let high_val = SierraU128::from_storage(state, contract_address, &high_key)?;
+        let high_val = SierraU128::from_storage(state, contract_address, &high_key).await?;
         Ok(Self { low_val: low_val.as_value(), high_val: high_val.as_value() })
     }
 }

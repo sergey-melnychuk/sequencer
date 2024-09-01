@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::cmp::min;
 use std::sync::Arc;
 
@@ -64,21 +63,20 @@ pub struct CallEntryPoint {
 }
 
 impl CallEntryPoint {
-    pub fn execute(
+    pub async fn execute<S: State + Send + Sync>(
         mut self,
-        state: &mut dyn State,
+        state: &mut S,
         resources: &mut ExecutionResources,
         context: &mut EntryPointExecutionContext,
     ) -> EntryPointExecutionResult<CallInfo> {
         let tx_context = &context.tx_context;
-        let mut decrement_when_dropped = RecursionDepthGuard::new(
-            context.current_recursion_depth.clone(),
-            context.versioned_constants().max_recursion_depth,
-        );
-        decrement_when_dropped.try_increment_and_check_depth()?;
+        context.current_recursion_depth += 1;
+        if context.current_recursion_depth > context.versioned_constants().max_recursion_depth {
+            return Err(EntryPointExecutionError::RecursionDepthExceeded);
+        }
 
         // Validate contract is deployed.
-        let storage_class_hash = state.get_class_hash_at(self.storage_address)?;
+        let storage_class_hash = state.get_class_hash_at(self.storage_address).await?;
         if storage_class_hash == ClassHash::default() {
             return Err(PreExecutionError::UninitializedStorageAddress(self.storage_address).into());
         }
@@ -98,9 +96,11 @@ impl CallEntryPoint {
         }
         // Add class hash to the call, that will appear in the output (call info).
         self.class_hash = Some(class_hash);
-        let contract_class = state.get_compiled_contract_class(class_hash)?;
+        let contract_class = state.get_compiled_contract_class(class_hash).await?;
 
-        execute_entry_point_call(self, contract_class, state, resources, context)
+        let ret = execute_entry_point_call(self, contract_class, state, resources, context);
+        context.current_recursion_depth -= 1;
+        ret
     }
 }
 
@@ -124,7 +124,7 @@ pub struct EntryPointExecutionContext {
     /// Used for tracking L2-to-L1 messages order during the current execution.
     pub n_sent_messages_to_l1: usize,
     // Managed by dedicated guard object.
-    current_recursion_depth: Arc<RefCell<usize>>,
+    current_recursion_depth: usize,
 
     // The execution mode affects the behavior of the hint processor.
     pub execution_mode: ExecutionMode,
@@ -290,8 +290,8 @@ impl EntryPointExecutionContext {
     }
 }
 
-pub fn execute_constructor_entry_point(
-    state: &mut dyn State,
+pub async fn execute_constructor_entry_point<S: State + Send + Sync>(
+    state: &mut S,
     resources: &mut ExecutionResources,
     context: &mut EntryPointExecutionContext,
     ctor_context: ConstructorContext,
@@ -300,7 +300,7 @@ pub fn execute_constructor_entry_point(
 ) -> ConstructorEntryPointExecutionResult<CallInfo> {
     // Ensure the class is declared (by reading it).
     let contract_class =
-        state.get_compiled_contract_class(ctor_context.class_hash).map_err(|error| {
+        state.get_compiled_contract_class(ctor_context.class_hash).await.map_err(|error| {
             ConstructorEntryPointExecutionError::new(error.into(), &ctor_context, None)
         })?;
     let Some(constructor_selector) = contract_class.constructor_selector() else {
@@ -321,7 +321,7 @@ pub fn execute_constructor_entry_point(
         initial_gas: remaining_gas,
     };
 
-    constructor_call.execute(state, resources, context).map_err(|error| {
+    constructor_call.execute(state, resources, context).await.map_err(|error| {
         ConstructorEntryPointExecutionError::new(error, &ctor_context, Some(constructor_selector))
     })
 }
@@ -355,33 +355,4 @@ pub fn handle_empty_constructor(
     };
 
     Ok(empty_constructor_call_info)
-}
-
-// Ensure that the recursion depth does not exceed the maximum allowed depth.
-struct RecursionDepthGuard {
-    current_depth: Arc<RefCell<usize>>,
-    max_depth: usize,
-}
-
-impl RecursionDepthGuard {
-    fn new(current_depth: Arc<RefCell<usize>>, max_depth: usize) -> Self {
-        Self { current_depth, max_depth }
-    }
-
-    // Tries to increment the current recursion depth and returns an error if the maximum depth
-    // would be exceeded.
-    fn try_increment_and_check_depth(&mut self) -> EntryPointExecutionResult<()> {
-        *self.current_depth.borrow_mut() += 1;
-        if *self.current_depth.borrow() > self.max_depth {
-            return Err(EntryPointExecutionError::RecursionDepthExceeded);
-        }
-        Ok(())
-    }
-}
-
-// Implementing the Drop trait to decrement the recursion depth when the guard goes out of scope.
-impl Drop for RecursionDepthGuard {
-    fn drop(&mut self) {
-        *self.current_depth.borrow_mut() -= 1;
-    }
 }

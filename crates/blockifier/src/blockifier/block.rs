@@ -54,7 +54,7 @@ impl GasPrices {
 // contract state, where N=STORED_BLOCK_HASH_BUFFER.
 // NOTE: This function must remain idempotent since full nodes can call it for an already updated
 // block hash table.
-pub fn pre_process_block(
+pub async fn pre_process_block(
     state: &mut dyn State,
     old_block_number_and_hash: Option<BlockNumberHashPair>,
     next_block_number: BlockNumber,
@@ -71,7 +71,7 @@ pub fn pre_process_block(
             block_hash_contract_address,
             block_number_as_storage_key,
             block_hash.0,
-        )?;
+        ).await?;
     } else if should_block_hash_be_provided {
         return Err(StateError::OldBlockHashNotProvided);
     }

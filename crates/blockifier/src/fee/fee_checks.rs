@@ -128,14 +128,14 @@ impl FeeCheckReport {
     }
 
     /// If the actual cost exceeds the sender's balance, returns a fee check error.
-    fn check_can_pay_fee<S: StateReader>(
+    async fn check_can_pay_fee<S: StateReader + Send + Sync>(
         state: &mut S,
         tx_context: &TransactionContext,
         tx_receipt: &TransactionReceipt,
     ) -> TransactionExecutionResult<()> {
         let TransactionReceipt { fee, .. } = *tx_receipt;
         let (balance_low, balance_high, can_pay) =
-            get_balance_and_if_covers_fee(state, tx_context, fee)?;
+            get_balance_and_if_covers_fee(state, tx_context, fee).await?;
         if can_pay {
             return Ok(());
         }
@@ -183,7 +183,7 @@ impl PostValidationReport {
 impl PostExecutionReport {
     /// Verifies the actual cost can be paid by the account. If not, reports an error and the fee
     /// that should be charged in revert flow.
-    pub fn new<S: StateReader>(
+    pub async fn new<S: StateReader + Send + Sync>(
         state: &mut S,
         tx_context: &TransactionContext,
         tx_receipt: &TransactionReceipt,
@@ -204,7 +204,7 @@ impl PostExecutionReport {
         // Next, verify the actual cost is covered by the account balance, which may have changed
         // after execution. If the above check passes, the pre-execution balance covers the actual
         // cost for sure.
-        let can_pay_fee_result = FeeCheckReport::check_can_pay_fee(state, tx_context, tx_receipt);
+        let can_pay_fee_result = FeeCheckReport::check_can_pay_fee(state, tx_context, tx_receipt).await;
 
         for fee_check_result in [cost_with_bounds_result, can_pay_fee_result] {
             match fee_check_result {

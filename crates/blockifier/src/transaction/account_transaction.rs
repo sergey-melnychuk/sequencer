@@ -172,7 +172,7 @@ impl AccountTransaction {
 
     // Performs static checks before executing validation entry point.
     // Note that nonce is incremented during these checks.
-    pub fn perform_pre_validation_stage<S: State + StateReader>(
+    pub async fn perform_pre_validation_stage<S: State + StateReader + Send + Sync>(
         &self,
         state: &mut S,
         tx_context: &TransactionContext,
@@ -180,12 +180,11 @@ impl AccountTransaction {
         strict_nonce_check: bool,
     ) -> TransactionPreValidationResult<()> {
         let tx_info = &tx_context.tx_info;
-        Self::handle_nonce(state, tx_info, strict_nonce_check)?;
+        Self::handle_nonce(state, tx_info, strict_nonce_check).await?;
 
         if charge_fee && tx_info.enforce_fee()? {
             self.check_fee_bounds(tx_context)?;
-
-            verify_can_pay_committed_bounds(state, tx_context)?;
+            verify_can_pay_committed_bounds(state, tx_context).await?;
         }
 
         Ok(())
@@ -243,8 +242,8 @@ impl AccountTransaction {
         Ok(())
     }
 
-    fn handle_nonce(
-        state: &mut dyn State,
+    async fn handle_nonce<S: State + Send + Sync>(
+        state: &mut S,
         tx_info: &TransactionInfo,
         strict: bool,
     ) -> TransactionPreValidationResult<()> {
@@ -253,7 +252,7 @@ impl AccountTransaction {
         }
 
         let address = tx_info.sender_address();
-        let account_nonce = state.get_nonce_at(address)?;
+        let account_nonce = state.get_nonce_at(address).await?;
         let incoming_tx_nonce = tx_info.nonce();
         let valid_nonce = if strict {
             account_nonce == incoming_tx_nonce
@@ -261,7 +260,7 @@ impl AccountTransaction {
             account_nonce <= incoming_tx_nonce
         };
         if valid_nonce {
-            return Ok(state.increment_nonce(address)?);
+            return Ok(state.increment_nonce(address).await?);
         }
         Err(TransactionPreValidationError::InvalidNonce {
             address,
@@ -270,9 +269,9 @@ impl AccountTransaction {
         })
     }
 
-    fn handle_validate_tx(
+    async fn handle_validate_tx<S: State + Send + Sync>(
         &self,
-        state: &mut dyn State,
+        state: &mut S,
         resources: &mut ExecutionResources,
         tx_context: Arc<TransactionContext>,
         remaining_gas: &mut u64,
@@ -280,7 +279,7 @@ impl AccountTransaction {
         limit_steps_by_resources: bool,
     ) -> TransactionExecutionResult<Option<CallInfo>> {
         if validate {
-            self.validate_tx(state, resources, tx_context, remaining_gas, limit_steps_by_resources)
+            self.validate_tx(state, resources, tx_context, remaining_gas, limit_steps_by_resources).await
         } else {
             Ok(None)
         }
@@ -316,7 +315,7 @@ impl AccountTransaction {
         Ok(())
     }
 
-    fn handle_fee<S: StateReader>(
+    async fn handle_fee<S: StateReader + Send + Sync>(
         &self,
         state: &mut TransactionalState<'_, S>,
         tx_context: Arc<TransactionContext>,
@@ -333,16 +332,16 @@ impl AccountTransaction {
         Self::assert_actual_fee_in_bounds(&tx_context, actual_fee)?;
 
         let fee_transfer_call_info = if concurrency_mode && !tx_context.is_sequencer_the_sender() {
-            Self::concurrency_execute_fee_transfer(state, tx_context, actual_fee)?
+            Self::concurrency_execute_fee_transfer(state, tx_context, actual_fee).await?
         } else {
-            Self::execute_fee_transfer(state, tx_context, actual_fee)?
+            Self::execute_fee_transfer(state, tx_context, actual_fee).await?
         };
 
         Ok(Some(fee_transfer_call_info))
     }
 
-    fn execute_fee_transfer(
-        state: &mut dyn State,
+    async fn execute_fee_transfer<S: State + Send + Sync>(
+        state: &mut S,
         tx_context: Arc<TransactionContext>,
         actual_fee: Fee,
     ) -> TransactionExecutionResult<CallInfo> {
@@ -374,6 +373,7 @@ impl AccountTransaction {
 
         Ok(fee_transfer_call
             .execute(state, &mut ExecutionResources::default(), &mut context)
+            .await
             .map_err(TransactionFeeError::ExecuteFeeTransferError)?)
     }
 
@@ -383,7 +383,7 @@ impl AccountTransaction {
     /// manipulates the state to avoid that part.
     /// Note: the returned transfer call info is partial, and should be completed at the commit
     /// stage, as well as the actual sequencer balance.
-    fn concurrency_execute_fee_transfer<S: StateReader>(
+    async fn concurrency_execute_fee_transfer<S: StateReader + Send + Sync>(
         state: &mut TransactionalState<'_, S>,
         tx_context: Arc<TransactionContext>,
         actual_fee: Fee,
@@ -395,22 +395,26 @@ impl AccountTransaction {
         let mut transfer_state = TransactionalState::create_transactional(state);
 
         // Set the initial sequencer balance to avoid tarnishing the read-set of the transaction.
-        let cache = transfer_state.cache.get_mut();
-        for key in [sequencer_balance_key_low, sequencer_balance_key_high] {
-            cache.set_storage_initial_value(fee_address, key, Felt::ZERO);
+        {
+            let mut cache = transfer_state.cache.lock().await;
+            for key in [sequencer_balance_key_low, sequencer_balance_key_high] {
+                cache.set_storage_initial_value(fee_address, key, Felt::ZERO);
+            }
         }
 
         let fee_transfer_call_info =
-            AccountTransaction::execute_fee_transfer(&mut transfer_state, tx_context, actual_fee);
+            AccountTransaction::execute_fee_transfer(&mut transfer_state, tx_context, actual_fee).await;
         // Commit without updating the sequencer balance.
-        let storage_writes = &mut transfer_state.cache.get_mut().writes.storage;
-        storage_writes.remove(&(fee_address, sequencer_balance_key_low));
-        storage_writes.remove(&(fee_address, sequencer_balance_key_high));
+        {
+            let storage_writes = &mut transfer_state.cache.lock().await.writes.storage;
+            storage_writes.remove(&(fee_address, sequencer_balance_key_low));
+            storage_writes.remove(&(fee_address, sequencer_balance_key_high));
+        }
         transfer_state.commit();
         fee_transfer_call_info
     }
 
-    fn run_execute<S: State>(
+    async fn run_execute<S: State + Send + Sync>(
         &self,
         state: &mut S,
         resources: &mut ExecutionResources,
@@ -418,13 +422,13 @@ impl AccountTransaction {
         remaining_gas: &mut u64,
     ) -> TransactionExecutionResult<Option<CallInfo>> {
         match &self {
-            Self::Declare(tx) => tx.run_execute(state, resources, context, remaining_gas),
-            Self::DeployAccount(tx) => tx.run_execute(state, resources, context, remaining_gas),
-            Self::Invoke(tx) => tx.run_execute(state, resources, context, remaining_gas),
+            Self::Declare(tx) => tx.run_execute(state, resources, context, remaining_gas).await,
+            Self::DeployAccount(tx) => tx.run_execute(state, resources, context, remaining_gas).await,
+            Self::Invoke(tx) => tx.run_execute(state, resources, context, remaining_gas).await,
         }
     }
 
-    fn run_non_revertible<S: StateReader>(
+    async fn run_non_revertible<S: StateReader + Send + Sync>(
         &self,
         state: &mut TransactionalState<'_, S>,
         tx_context: Arc<TransactionContext>,
@@ -442,7 +446,7 @@ impl AccountTransaction {
             let mut execution_context =
                 EntryPointExecutionContext::new_validate(tx_context.clone(), charge_fee)?;
             execute_call_info =
-                self.run_execute(state, &mut resources, &mut execution_context, remaining_gas)?;
+                self.run_execute(state, &mut resources, &mut execution_context, remaining_gas).await?;
             validate_call_info = self.handle_validate_tx(
                 state,
                 &mut resources,
@@ -450,7 +454,7 @@ impl AccountTransaction {
                 remaining_gas,
                 validate,
                 charge_fee,
-            )?;
+            ).await?;
         } else {
             let mut execution_context =
                 EntryPointExecutionContext::new_invoke(tx_context.clone(), charge_fee)?;
@@ -461,22 +465,22 @@ impl AccountTransaction {
                 remaining_gas,
                 validate,
                 charge_fee,
-            )?;
+            ).await?;
             execute_call_info =
-                self.run_execute(state, &mut resources, &mut execution_context, remaining_gas)?;
+                self.run_execute(state, &mut resources, &mut execution_context, remaining_gas).await?;
         }
 
         let tx_receipt = TransactionReceipt::from_account_tx(
             self,
             &tx_context,
-            &state.get_actual_state_changes()?,
+            &state.get_actual_state_changes().await?,
             &resources,
             validate_call_info.iter().chain(execute_call_info.iter()),
             0,
         )?;
 
         let post_execution_report =
-            PostExecutionReport::new(state, &tx_context, &tx_receipt, charge_fee)?;
+            PostExecutionReport::new(state, &tx_context, &tx_receipt, charge_fee).await?;
         match post_execution_report.error() {
             Some(error) => Err(error.into()),
             None => Ok(ValidateExecuteCallInfo::new_accepted(
@@ -487,7 +491,7 @@ impl AccountTransaction {
         }
     }
 
-    fn run_revertible<S: StateReader>(
+    async fn run_revertible<S: StateReader + Send + Sync>(
         &self,
         state: &mut TransactionalState<'_, S>,
         tx_context: Arc<TransactionContext>,
@@ -506,7 +510,7 @@ impl AccountTransaction {
             remaining_gas,
             validate,
             charge_fee,
-        )?;
+        ).await?;
 
         let n_allotted_execution_steps = execution_context.subtract_validation_and_overhead_steps(
             &validate_call_info,
@@ -516,7 +520,7 @@ impl AccountTransaction {
 
         // Save the state changes resulting from running `validate_tx`, to be used later for
         // resource and fee calculation.
-        let validate_state_changes = state.get_actual_state_changes()?;
+        let validate_state_changes = state.get_actual_state_changes().await?;
 
         // Create copies of state and resources for the execution.
         // Both will be rolled back if the execution is reverted or committed upon success.
@@ -528,7 +532,7 @@ impl AccountTransaction {
             &mut execution_resources,
             &mut execution_context,
             remaining_gas,
-        );
+        ).await;
 
         // Pre-compute cost in case of revert.
         let execution_steps_consumed =
@@ -551,7 +555,7 @@ impl AccountTransaction {
                     &tx_context,
                     &StateChanges::merge(vec![
                         validate_state_changes,
-                        execution_state.get_actual_state_changes()?,
+                        execution_state.get_actual_state_changes().await?,
                     ]),
                     &execution_resources,
                     validate_call_info.iter().chain(execute_call_info.iter()),
@@ -563,7 +567,7 @@ impl AccountTransaction {
                     &tx_context,
                     &tx_receipt,
                     charge_fee,
-                )?;
+                ).await?;
                 match post_execution_report.error() {
                     Some(post_execution_error) => {
                         // Post-execution check failed. Revert the execution, compute the final fee
@@ -595,7 +599,7 @@ impl AccountTransaction {
                 // Error during execution. Revert, even if the error is sequencer-related.
                 execution_state.abort();
                 let post_execution_report =
-                    PostExecutionReport::new(state, &tx_context, &revert_cost, charge_fee)?;
+                    PostExecutionReport::new(state, &tx_context, &revert_cost, charge_fee).await?;
                 Ok(ValidateExecuteCallInfo::new_reverted(
                     validate_call_info,
                     execution_error.to_string(),
@@ -628,7 +632,7 @@ impl AccountTransaction {
     }
 
     /// Runs validation and execution.
-    fn run_or_revert<S: StateReader>(
+    async fn run_or_revert<S: StateReader + Send + Sync>(
         &self,
         state: &mut TransactionalState<'_, S>,
         remaining_gas: &mut u64,
@@ -637,15 +641,17 @@ impl AccountTransaction {
         charge_fee: bool,
     ) -> TransactionExecutionResult<ValidateExecuteCallInfo> {
         if self.is_non_revertible(&tx_context.tx_info) {
-            return self.run_non_revertible(state, tx_context, remaining_gas, validate, charge_fee);
+            return self.run_non_revertible(state, tx_context, remaining_gas, validate, charge_fee).await;
         }
 
-        self.run_revertible(state, tx_context, remaining_gas, validate, charge_fee)
+        self.run_revertible(state, tx_context, remaining_gas, validate, charge_fee).await
     }
 }
 
-impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
-    fn execute_raw(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<U: UpdatableState + Send + Sync> ExecutableTransaction<U> for AccountTransaction {
+    async fn execute_raw(
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
@@ -661,7 +667,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
             &tx_context,
             execution_flags.charge_fee,
             strict_nonce_check,
-        )?;
+        ).await?;
 
         // Run validation and execution.
         let mut remaining_gas = block_context.versioned_constants.tx_initial_gas();
@@ -682,14 +688,14 @@ impl<U: UpdatableState> ExecutableTransaction<U> for AccountTransaction {
             tx_context.clone(),
             execution_flags.validate,
             execution_flags.charge_fee,
-        )?;
+        ).await?;
         let fee_transfer_call_info = self.handle_fee(
             state,
             tx_context,
             final_fee,
             execution_flags.charge_fee,
             execution_flags.concurrency_mode,
-        )?;
+        ).await?;
 
         let tx_execution_info = TransactionExecutionInfo {
             validate_call_info,
@@ -748,10 +754,12 @@ impl ValidateExecuteCallInfo {
     }
 }
 
-impl ValidatableTransaction for AccountTransaction {
-    fn validate_tx(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: State + Send + Sync> ValidatableTransaction<S> for AccountTransaction {
+    async fn validate_tx(
         &self,
-        state: &mut dyn State,
+        state: &mut S,
         resources: &mut ExecutionResources,
         tx_context: Arc<TransactionContext>,
         remaining_gas: &mut u64,
@@ -765,7 +773,7 @@ impl ValidatableTransaction for AccountTransaction {
         }
 
         let storage_address = tx_info.sender_address();
-        let class_hash = state.get_class_hash_at(storage_address)?;
+        let class_hash = state.get_class_hash_at(storage_address).await?;
         let validate_selector = self.validate_entry_point_selector();
         let validate_call = CallEntryPoint {
             entry_point_type: EntryPointType::External,
@@ -780,7 +788,7 @@ impl ValidatableTransaction for AccountTransaction {
         };
 
         let validate_call_info =
-            validate_call.execute(state, resources, &mut context).map_err(|error| {
+            validate_call.execute(state, resources, &mut context).await.map_err(|error| {
                 TransactionExecutionError::ValidateTransactionError {
                     error,
                     class_hash,
@@ -790,7 +798,7 @@ impl ValidatableTransaction for AccountTransaction {
             })?;
 
         // Validate return data.
-        let contract_class = state.get_compiled_contract_class(class_hash)?;
+        let contract_class = state.get_compiled_contract_class(class_hash).await?;
         if let ContractClass::V1(_) = contract_class {
             // The account contract class is a Cairo 1.0 contract; the `validate` entry point should
             // return `VALID`.

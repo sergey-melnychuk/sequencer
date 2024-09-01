@@ -64,10 +64,12 @@ pub struct ExecutionFlags {
     pub concurrency_mode: bool,
 }
 
-pub trait ExecutableTransaction<U: UpdatableState>: Sized {
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ExecutableTransaction<U: UpdatableState + Send + Sync>: Sized {
     /// Executes the transaction in a transactional manner
     /// (if it fails, given state does not modify).
-    fn execute(
+    async fn execute(
         &self,
         state: &mut U,
         block_context: &BlockContext,
@@ -78,7 +80,7 @@ pub trait ExecutableTransaction<U: UpdatableState>: Sized {
         let mut transactional_state = TransactionalState::create_transactional(state);
         let execution_flags = ExecutionFlags { charge_fee, validate, concurrency_mode: false };
         let execution_result =
-            self.execute_raw(&mut transactional_state, block_context, execution_flags);
+            self.execute_raw(&mut transactional_state, block_context, execution_flags).await;
 
         match execution_result {
             Ok(value) => {
@@ -98,7 +100,7 @@ pub trait ExecutableTransaction<U: UpdatableState>: Sized {
     /// any changes made up to the point of failure will persist in the state. To revert these
     /// changes, you should call `state.abort()`. Alternatively, consider using `execute`
     /// for automatic handling of such cases.
-    fn execute_raw(
+    async fn execute_raw(
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
@@ -106,8 +108,10 @@ pub trait ExecutableTransaction<U: UpdatableState>: Sized {
     ) -> TransactionExecutionResult<TransactionExecutionInfo>;
 }
 
-pub trait Executable<S: State> {
-    fn run_execute(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait Executable<S: State + Send + Sync> {
+    async fn run_execute(
         &self,
         state: &mut S,
         resources: &mut ExecutionResources,
@@ -117,10 +121,12 @@ pub trait Executable<S: State> {
 }
 
 /// Intended for use in sequencer pre-execution flows, like in a gateway service.
-pub trait ValidatableTransaction {
-    fn validate_tx(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+pub trait ValidatableTransaction<S: State + Send + Sync> {
+    async fn validate_tx(
         &self,
-        state: &mut dyn State,
+        state: &mut S,
         resources: &mut ExecutionResources,
         tx_context: Arc<TransactionContext>,
         remaining_gas: &mut u64,
@@ -183,18 +189,18 @@ impl DeclareTransaction {
         self.only_query
     }
 
-    fn try_declare<S: State>(
+    async fn try_declare<S: State>(
         &self,
         state: &mut S,
         class_hash: ClassHash,
         compiled_class_hash: Option<CompiledClassHash>,
     ) -> TransactionExecutionResult<()> {
-        match state.get_compiled_contract_class(class_hash) {
+        match state.get_compiled_contract_class(class_hash).await {
             Err(StateError::UndeclaredClassHash(_)) => {
                 // Class is undeclared; declare it.
-                state.set_contract_class(class_hash, self.contract_class())?;
+                state.set_contract_class(class_hash, self.contract_class()).await?;
                 if let Some(compiled_class_hash) = compiled_class_hash {
-                    state.set_compiled_class_hash(class_hash, compiled_class_hash)?;
+                    state.set_compiled_class_hash(class_hash, compiled_class_hash).await?;
                 }
                 Ok(())
             }
@@ -207,8 +213,10 @@ impl DeclareTransaction {
     }
 }
 
-impl<S: State> Executable<S> for DeclareTransaction {
-    fn run_execute(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: State + Send + Sync> Executable<S> for DeclareTransaction {
+    async fn run_execute(
         &self,
         state: &mut S,
         _resources: &mut ExecutionResources,
@@ -221,12 +229,12 @@ impl<S: State> Executable<S> for DeclareTransaction {
             | starknet_api::transaction::DeclareTransaction::V1(_) => {
                 if context.tx_context.block_context.versioned_constants.disable_cairo0_redeclaration
                 {
-                    self.try_declare(state, class_hash, None)?
+                    self.try_declare(state, class_hash, None).await?
                 } else {
                     // We allow redeclaration of the class for backward compatibility.
                     // In the past, we allowed redeclaration of Cairo 0 contracts since there was
                     // no class commitment (so no need to check if the class is already declared).
-                    state.set_contract_class(class_hash, self.contract_class())?;
+                    state.set_contract_class(class_hash, self.contract_class()).await?;
                 }
             }
             starknet_api::transaction::DeclareTransaction::V2(DeclareTransactionV2 {
@@ -236,7 +244,7 @@ impl<S: State> Executable<S> for DeclareTransaction {
             | starknet_api::transaction::DeclareTransaction::V3(DeclareTransactionV3 {
                 compiled_class_hash,
                 ..
-            }) => self.try_declare(state, class_hash, Some(*compiled_class_hash))?,
+            }) => self.try_declare(state, class_hash, Some(*compiled_class_hash)).await?,
         }
         Ok(None)
     }
@@ -321,8 +329,10 @@ impl DeployAccountTransaction {
     }
 }
 
-impl<S: State> Executable<S> for DeployAccountTransaction {
-    fn run_execute(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: State + Send + Sync> Executable<S> for DeployAccountTransaction {
+    async fn run_execute(
         &self,
         state: &mut S,
         resources: &mut ExecutionResources,
@@ -343,7 +353,7 @@ impl<S: State> Executable<S> for DeployAccountTransaction {
             ctor_context,
             self.constructor_calldata(),
             *remaining_gas,
-        )?;
+        ).await?;
         update_remaining_gas(remaining_gas, &call_info);
 
         Ok(Some(call_info))
@@ -413,8 +423,10 @@ impl InvokeTransaction {
     );
 }
 
-impl<S: State> Executable<S> for InvokeTransaction {
-    fn run_execute(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: State + Send + Sync> Executable<S> for InvokeTransaction {
+    async fn run_execute(
         &self,
         state: &mut S,
         resources: &mut ExecutionResources,
@@ -429,7 +441,7 @@ impl<S: State> Executable<S> for InvokeTransaction {
             }
         };
         let storage_address = context.tx_context.tx_info.sender_address();
-        let class_hash = state.get_class_hash_at(storage_address)?;
+        let class_hash = state.get_class_hash_at(storage_address).await?;
         let execute_call = CallEntryPoint {
             entry_point_type: EntryPointType::External,
             entry_point_selector,
@@ -442,7 +454,7 @@ impl<S: State> Executable<S> for InvokeTransaction {
             initial_gas: *remaining_gas,
         };
 
-        let call_info = execute_call.execute(state, resources, context).map_err(|error| {
+        let call_info = execute_call.execute(state, resources, context).await.map_err(|error| {
             TransactionExecutionError::ExecutionError {
                 error,
                 class_hash,
@@ -536,8 +548,10 @@ impl HasRelatedFeeType for L1HandlerTransaction {
     }
 }
 
-impl<S: State> Executable<S> for L1HandlerTransaction {
-    fn run_execute(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: State + Send + Sync> Executable<S> for L1HandlerTransaction {
+    async fn run_execute(
         &self,
         state: &mut S,
         resources: &mut ExecutionResources,
@@ -546,7 +560,7 @@ impl<S: State> Executable<S> for L1HandlerTransaction {
     ) -> TransactionExecutionResult<Option<CallInfo>> {
         let tx = &self.tx;
         let storage_address = tx.contract_address;
-        let class_hash = state.get_class_hash_at(storage_address)?;
+        let class_hash = state.get_class_hash_at(storage_address).await?;
         let selector = tx.entry_point_selector;
         let execute_call = CallEntryPoint {
             entry_point_type: EntryPointType::L1Handler,
@@ -560,7 +574,7 @@ impl<S: State> Executable<S> for L1HandlerTransaction {
             initial_gas: *remaining_gas,
         };
 
-        execute_call.execute(state, resources, context).map(Some).map_err(|error| {
+        execute_call.execute(state, resources, context).await.map(Some).map_err(|error| {
             TransactionExecutionError::ExecutionError {
                 error,
                 class_hash,

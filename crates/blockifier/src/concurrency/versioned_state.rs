@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
+use futures::lock::{Mutex, MutexGuard};
 
 use starknet_api::core::{ClassHash, CompiledClassHash, ContractAddress, Nonce};
 use starknet_api::state::StorageKey;
@@ -242,7 +243,6 @@ impl<S: StateReader> ThreadSafeVersionedState<S> {
                 )
             })
             .into_inner()
-            .expect("No other mutex should hold the versioned state while calling this method.")
     }
 }
 
@@ -258,89 +258,93 @@ pub struct VersionedStateProxy<S: StateReader> {
 }
 
 impl<S: StateReader> VersionedStateProxy<S> {
-    fn state(&self) -> LockedVersionedState<'_, S> {
-        self.state.lock().expect("Failed to acquire state lock.")
+    async fn state(&self) -> LockedVersionedState<'_, S> {
+        self.state.lock().await
     }
 
-    pub fn validate_reads(&self, reads: &StateMaps) -> bool {
-        self.state().validate_reads(self.tx_index, reads)
+    pub async fn validate_reads(&self, reads: &StateMaps) -> bool {
+        self.state().await.validate_reads(self.tx_index, reads)
     }
 
-    pub fn delete_writes(&self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping) {
-        self.state().delete_writes(self.tx_index, writes, class_hash_to_class);
+    pub async fn delete_writes(&self, writes: &StateMaps, class_hash_to_class: &ContractClassMapping) {
+        self.state().await.delete_writes(self.tx_index, writes, class_hash_to_class);
     }
 }
 
 // TODO(Noa, 15/5/24): Consider using visited_pcs.
-impl<S: StateReader> UpdatableState for VersionedStateProxy<S> {
-    fn apply_writes(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: StateReader + Send + Sync> UpdatableState for VersionedStateProxy<S> {
+    async fn apply_writes(
         &mut self,
         writes: &StateMaps,
         class_hash_to_class: &ContractClassMapping,
         _visited_pcs: &HashMap<ClassHash, HashSet<usize>>,
     ) {
-        self.state().apply_writes(self.tx_index, writes, class_hash_to_class)
+        self.state().await.apply_writes(self.tx_index, writes, class_hash_to_class);
     }
 }
 
-impl<S: StateReader> StateReader for VersionedStateProxy<S> {
-    fn get_storage_at(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<S: StateReader + Send + Sync> StateReader for VersionedStateProxy<S> {
+    async fn get_storage_at(
         &self,
         contract_address: ContractAddress,
         key: StorageKey,
     ) -> StateResult<Felt> {
-        let mut state = self.state();
+        let mut state = self.state().await;
         match state.storage.read(self.tx_index, (contract_address, key)) {
             Some(value) => Ok(value),
             None => {
-                let initial_value = state.initial_state.get_storage_at(contract_address, key)?;
+                let initial_value = state.initial_state.get_storage_at(contract_address, key).await?;
                 state.storage.set_initial_value((contract_address, key), initial_value);
                 Ok(initial_value)
             }
         }
     }
 
-    fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
-        let mut state = self.state();
+    async fn get_nonce_at(&self, contract_address: ContractAddress) -> StateResult<Nonce> {
+        let mut state = self.state().await;
         match state.nonces.read(self.tx_index, contract_address) {
             Some(value) => Ok(value),
             None => {
-                let initial_value = state.initial_state.get_nonce_at(contract_address)?;
+                let initial_value = state.initial_state.get_nonce_at(contract_address).await?;
                 state.nonces.set_initial_value(contract_address, initial_value);
                 Ok(initial_value)
             }
         }
     }
 
-    fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
-        let mut state = self.state();
+    async fn get_class_hash_at(&self, contract_address: ContractAddress) -> StateResult<ClassHash> {
+        let mut state = self.state().await;
         match state.class_hashes.read(self.tx_index, contract_address) {
             Some(value) => Ok(value),
             None => {
-                let initial_value = state.initial_state.get_class_hash_at(contract_address)?;
+                let initial_value = state.initial_state.get_class_hash_at(contract_address).await?;
                 state.class_hashes.set_initial_value(contract_address, initial_value);
                 Ok(initial_value)
             }
         }
     }
 
-    fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
-        let mut state = self.state();
+    async fn get_compiled_class_hash(&self, class_hash: ClassHash) -> StateResult<CompiledClassHash> {
+        let mut state = self.state().await;
         match state.compiled_class_hashes.read(self.tx_index, class_hash) {
             Some(value) => Ok(value),
             None => {
-                let initial_value = state.initial_state.get_compiled_class_hash(class_hash)?;
+                let initial_value = state.initial_state.get_compiled_class_hash(class_hash).await?;
                 state.compiled_class_hashes.set_initial_value(class_hash, initial_value);
                 Ok(initial_value)
             }
         }
     }
 
-    fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
-        let mut state = self.state();
+    async fn get_compiled_contract_class(&self, class_hash: ClassHash) -> StateResult<ContractClass> {
+        let mut state = self.state().await;
         match state.compiled_contract_classes.read(self.tx_index, class_hash) {
             Some(value) => Ok(value),
-            None => match state.initial_state.get_compiled_contract_class(class_hash) {
+            None => match state.initial_state.get_compiled_contract_class(class_hash).await {
                 Ok(initial_value) => {
                     state.declared_contracts.set_initial_value(class_hash, true);
                     state

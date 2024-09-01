@@ -108,8 +108,10 @@ impl TransactionInfoCreator for Transaction {
     }
 }
 
-impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
-    fn execute_raw(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<U: UpdatableState + Send + Sync> ExecutableTransaction<U> for L1HandlerTransaction {
+    async fn execute_raw(
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
@@ -121,7 +123,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
         let mut context = EntryPointExecutionContext::new_invoke(tx_context.clone(), true)?;
         let mut remaining_gas = block_context.versioned_constants.tx_initial_gas();
         let execute_call_info =
-            self.run_execute(state, &mut execution_resources, &mut context, &mut remaining_gas)?;
+            self.run_execute(state, &mut execution_resources, &mut context, &mut remaining_gas).await?;
         let l1_handler_payload_size = self.payload_size();
 
         let TransactionReceipt {
@@ -133,7 +135,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
             &tx_context,
             l1_handler_payload_size,
             execute_call_info.iter(),
-            &state.get_actual_state_changes()?,
+            &state.get_actual_state_changes().await?,
             &execution_resources,
         )?;
 
@@ -159,8 +161,10 @@ impl<U: UpdatableState> ExecutableTransaction<U> for L1HandlerTransaction {
     }
 }
 
-impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
-    fn execute_raw(
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+impl<U: UpdatableState + Send + Sync> ExecutableTransaction<U> for Transaction {
+    async fn execute_raw(
         &self,
         state: &mut TransactionalState<'_, U>,
         block_context: &BlockContext,
@@ -172,17 +176,17 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
         let concurrency_mode = execution_flags.concurrency_mode;
         let tx_execution_info = match self {
             Self::AccountTransaction(account_tx) => {
-                account_tx.execute_raw(state, block_context, execution_flags)?
+                account_tx.execute_raw(state, block_context, execution_flags).await?
             }
             Self::L1HandlerTransaction(tx) => {
-                tx.execute_raw(state, block_context, execution_flags)?
+                tx.execute_raw(state, block_context, execution_flags).await?
             }
         };
 
         // Check if the transaction is too large to fit any block.
         // TODO(Yoni, 1/8/2024): consider caching these two.
         let tx_execution_summary = tx_execution_info.summarize();
-        let mut tx_state_changes_keys = state.get_actual_state_changes()?.into_keys();
+        let mut tx_state_changes_keys = state.get_actual_state_changes().await?.into_keys();
         tx_state_changes_keys.update_sequencer_key_in_storage(
             &block_context.to_tx_context(self),
             &tx_execution_info,
@@ -194,7 +198,7 @@ impl<U: UpdatableState> ExecutableTransaction<U> for Transaction {
             &tx_execution_info.transaction_receipt.resources,
             &tx_state_changes_keys,
             &block_context.bouncer_config,
-        )?;
+        ).await?;
 
         Ok(tx_execution_info)
     }

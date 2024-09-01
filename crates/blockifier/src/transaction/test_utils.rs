@@ -101,7 +101,7 @@ pub struct TestInitData {
 
 /// Deploys a new account with the given class hash, funds with both fee tokens, and returns the
 /// deploy tx and address.
-pub fn deploy_and_fund_account(
+pub async fn deploy_and_fund_account(
     state: &mut CachedState<DictStateReader>,
     nonce_manager: &mut NonceManager,
     chain_info: &ChainInfo,
@@ -120,6 +120,7 @@ pub fn deploy_and_fund_account(
         let fee_token_address = chain_info.fee_token_address(&fee_type);
         state
             .set_storage_at(fee_token_address, deployed_account_balance_key, felt!(BALANCE))
+            .await
             .unwrap();
     }
 
@@ -281,12 +282,12 @@ pub fn account_invoke_tx(invoke_args: InvokeTxArgs) -> AccountTransaction {
     AccountTransaction::Invoke(invoke_tx(invoke_args))
 }
 
-pub fn run_invoke_tx(
+pub async fn run_invoke_tx(
     state: &mut CachedState<DictStateReader>,
     block_context: &BlockContext,
     invoke_args: InvokeTxArgs,
 ) -> TransactionExecutionResult<TransactionExecutionInfo> {
-    account_invoke_tx(invoke_args).execute(state, block_context, true, true)
+    account_invoke_tx(invoke_args).execute(state, block_context, true, true).await
 }
 
 /// Creates a `ResourceBoundsMapping` with the given `max_amount` and `max_price` for L1 gas limits.

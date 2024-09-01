@@ -22,6 +22,7 @@ ark-ec.workspace = true
 ark-ff.workspace = true
 ark-secp256k1.workspace = true
 ark-secp256r1.workspace = true
+async-trait.workspace = true
 cached.workspace = true
 cairo-lang-casm = { workspace = true, features = ["parity-scale-codec"] }
 cairo-lang-runner.workspace = true
@@ -29,6 +30,7 @@ cairo-lang-starknet-classes.workspace = true
 cairo-lang-utils.workspace = true
 cairo-vm.workspace = true
 derive_more.workspace = true
+futures.workspace = true
 hashbrown = "0.14.5"
 indexmap.workspace = true
 itertools.workspace = true

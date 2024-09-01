@@ -227,7 +227,7 @@ impl Bouncer {
     }
 
     /// Updates the bouncer with a new transaction.
-    pub fn try_update<S: StateReader>(
+    pub async fn try_update<S: StateReader>(
         &mut self,
         state_reader: &S,
         tx_state_changes_keys: &StateChangesKeys,
@@ -253,7 +253,7 @@ impl Bouncer {
             n_marginal_visited_storage_entries,
             tx_resources,
             &marginal_state_changes_keys,
-        )?;
+        ).await?;
 
         // Check if the transaction can fit the current block available capacity.
         if !self.bouncer_config.has_room(self.accumulated_weights + tx_weights) {
@@ -290,7 +290,7 @@ impl Bouncer {
     }
 }
 
-pub fn get_tx_weights<S: StateReader>(
+pub async fn get_tx_weights<S: StateReader>(
     state_reader: &S,
     executed_class_hashes: &HashSet<ClassHash>,
     n_visited_storage_entries: usize,
@@ -301,7 +301,7 @@ pub fn get_tx_weights<S: StateReader>(
         tx_resources.starknet_resources.calculate_message_l1_resources();
 
     let mut additional_os_resources =
-        get_casm_hash_calculation_resources(state_reader, executed_class_hashes)?;
+        get_casm_hash_calculation_resources(state_reader, executed_class_hashes).await?;
     additional_os_resources += &get_particia_update_resources(n_visited_storage_entries);
 
     let vm_resources = &additional_os_resources + &tx_resources.vm_resources;
@@ -318,14 +318,14 @@ pub fn get_tx_weights<S: StateReader>(
 
 /// Returns the estimated Cairo resources for Casm hash calculation (done by the OS), of the given
 /// classes.
-pub fn get_casm_hash_calculation_resources<S: StateReader>(
+pub async fn get_casm_hash_calculation_resources<S: StateReader>(
     state_reader: &S,
     executed_class_hashes: &HashSet<ClassHash>,
 ) -> TransactionExecutionResult<ExecutionResources> {
     let mut casm_hash_computation_resources = ExecutionResources::default();
 
     for class_hash in executed_class_hashes {
-        let class = state_reader.get_compiled_contract_class(*class_hash)?;
+        let class = state_reader.get_compiled_contract_class(*class_hash).await?;
         casm_hash_computation_resources += &class.estimate_casm_hash_computation_resources();
     }
 
@@ -350,7 +350,7 @@ pub fn get_particia_update_resources(n_visited_storage_entries: usize) -> Execut
     }
 }
 
-pub fn verify_tx_weights_in_bounds<S: StateReader>(
+pub async fn verify_tx_weights_in_bounds<S: StateReader>(
     state_reader: &S,
     tx_execution_summary: &ExecutionSummary,
     tx_resources: &TransactionResources,
@@ -363,7 +363,7 @@ pub fn verify_tx_weights_in_bounds<S: StateReader>(
         tx_execution_summary.visited_storage_entries.len(),
         tx_resources,
         tx_state_changes_keys,
-    )?;
+    ).await?;
 
     if !bouncer_config.has_room(tx_weights) {
         return Err(TransactionExecutionError::TransactionTooLarge);

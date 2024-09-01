@@ -34,9 +34,9 @@ use crate::state::state_api::State;
 
 // TODO(spapini): Try to refactor this file into a StarknetRunner struct.
 
-pub struct VmExecutionContext<'a> {
+pub struct VmExecutionContext<'a, S: State + Send + Sync> {
     pub runner: CairoRunner,
-    pub syscall_handler: SyscallHintProcessor<'a>,
+    pub syscall_handler: SyscallHintProcessor<'a, S>,
     pub initial_syscall_ptr: Relocatable,
     pub entry_point: EntryPointV1,
     // Additional data required for execution is appended after the program bytecode.
@@ -50,10 +50,10 @@ pub struct CallResult {
 }
 
 /// Executes a specific call to a contract entry point and returns its output.
-pub fn execute_entry_point_call(
+pub fn execute_entry_point_call<S: State + Send + Sync>(
     call: CallEntryPoint,
     contract_class: ContractClassV1,
-    state: &mut dyn State,
+    state: &mut S,
     resources: &mut ExecutionResources,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
@@ -144,13 +144,13 @@ fn register_visited_pcs(
     Ok(())
 }
 
-pub fn initialize_execution_context<'a>(
+pub fn initialize_execution_context<'a, S: State + Send + Sync>(
     call: CallEntryPoint,
     contract_class: &'a ContractClassV1,
-    state: &'a mut dyn State,
+    state: &'a mut S,
     resources: &'a mut ExecutionResources,
     context: &'a mut EntryPointExecutionContext,
-) -> Result<VmExecutionContext<'a>, PreExecutionError> {
+) -> Result<VmExecutionContext<'a, S>, PreExecutionError> {
     let entry_point = contract_class.get_entry_point(&call)?;
 
     // Instantiate Cairo runner.
@@ -266,10 +266,11 @@ pub fn prepare_call_arguments(
 
     Ok(args)
 }
+
 /// Runs the runner from the given PC.
-pub fn run_entry_point(
+pub fn run_entry_point<S: State + Send + Sync>(
     runner: &mut CairoRunner,
-    hint_processor: &mut SyscallHintProcessor<'_>,
+    hint_processor: &mut SyscallHintProcessor<'_, S>,
     entry_point: EntryPointV1,
     args: Args,
     program_segment_size: usize,
@@ -353,9 +354,9 @@ fn maybe_fill_holes(
     Ok(())
 }
 
-pub fn finalize_execution(
+pub fn finalize_execution<S: State + Send + Sync>(
     mut runner: CairoRunner,
-    syscall_handler: SyscallHintProcessor<'_>,
+    syscall_handler: SyscallHintProcessor<'_, S>,
     previous_resources: ExecutionResources,
     n_total_args: usize,
     program_extra_data_length: usize,
@@ -412,9 +413,9 @@ pub fn finalize_execution(
     })
 }
 
-fn get_call_result(
+fn get_call_result<S: State + Send + Sync>(
     runner: &CairoRunner,
-    syscall_handler: &SyscallHintProcessor<'_>,
+    syscall_handler: &SyscallHintProcessor<'_, S>,
 ) -> Result<CallResult, PostExecutionError> {
     let return_result = runner.vm.get_return_values(5)?;
     // Corresponds to the Cairo 1.0 enum:

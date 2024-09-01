@@ -21,6 +21,7 @@ use crate::execution::syscalls::{
     SyscallResult,
     WriteResponseResult,
 };
+use crate::state::state_api::State;
 
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct SecpHintProcessor<Curve: SWCurveConfig> {
@@ -186,19 +187,19 @@ impl SyscallRequest for SecpAddRequest {
 
 type SecpAddResponse = SecpOpRespone;
 
-pub fn secp256k1_add(
+pub fn secp256k1_add<S: State + Send + Sync>(
     request: SecpAddRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpOpRespone> {
     syscall_handler.secp256k1_hint_processor.secp_add(request)
 }
 
-pub fn secp256r1_add(
+pub fn secp256r1_add<S: State + Send + Sync>(
     request: SecpAddRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpOpRespone> {
     syscall_handler.secp256r1_hint_processor.secp_add(request)
@@ -225,19 +226,19 @@ impl SyscallRequest for SecpGetPointFromXRequest {
 
 type SecpGetPointFromXResponse = SecpOptionalEcPointResponse;
 
-pub fn secp256k1_get_point_from_x(
+pub fn secp256k1_get_point_from_x<S: State + Send + Sync>(
     request: SecpGetPointFromXRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpGetPointFromXResponse> {
     syscall_handler.secp256k1_hint_processor.secp_get_point_from_x(request)
 }
 
-pub fn secp256r1_get_point_from_x(
+pub fn secp256r1_get_point_from_x<S: State + Send + Sync>(
     request: SecpGetPointFromXRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpGetPointFromXResponse> {
     syscall_handler.secp256r1_hint_processor.secp_get_point_from_x(request)
@@ -266,19 +267,19 @@ impl SyscallResponse for SecpGetXyResponse {
     }
 }
 
-pub fn secp256k1_get_xy(
+pub fn secp256k1_get_xy<S: State + Send + Sync>(
     request: SecpGetXyRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpGetXyResponse> {
     syscall_handler.secp256k1_hint_processor.secp_get_xy(request)
 }
 
-pub fn secp256r1_get_xy(
+pub fn secp256r1_get_xy<S: State + Send + Sync>(
     request: SecpGetXyRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpGetXyResponse> {
     syscall_handler.secp256r1_hint_processor.secp_get_xy(request)
@@ -302,19 +303,19 @@ impl SyscallRequest for SecpMulRequest {
 
 type SecpMulResponse = SecpOpRespone;
 
-pub fn secp256k1_mul(
+pub fn secp256k1_mul<S: State + Send + Sync>(
     request: SecpMulRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpMulResponse> {
     syscall_handler.secp256k1_hint_processor.secp_mul(request)
 }
 
-pub fn secp256r1_mul(
+pub fn secp256r1_mul<S: State + Send + Sync>(
     request: SecpMulRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpMulResponse> {
     syscall_handler.secp256r1_hint_processor.secp_mul(request)
@@ -334,10 +335,10 @@ impl SyscallRequest for SecpNewRequest {
 
 type SecpNewResponse = SecpOptionalEcPointResponse;
 
-pub fn secp256k1_new(
+pub fn secp256k1_new<S: State + Send + Sync>(
     request: SecpNewRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SecpNewResponse> {
     syscall_handler.secp256k1_hint_processor.secp_new(request)
@@ -346,10 +347,10 @@ pub fn secp256k1_new(
 type Secp256r1NewRequest = EcPointCoordinates;
 type Secp256r1NewResponse = SecpOptionalEcPointResponse;
 
-pub fn secp256r1_new(
+pub fn secp256r1_new<S: State + Send + Sync>(
     request: Secp256r1NewRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<Secp256r1NewResponse> {
     syscall_handler.secp256r1_hint_processor.secp_new(request)

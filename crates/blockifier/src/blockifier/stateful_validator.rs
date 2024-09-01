@@ -41,18 +41,18 @@ pub enum StatefulValidatorError {
 pub type StatefulValidatorResult<T> = Result<T, StatefulValidatorError>;
 
 /// Manages state related transaction validations for pre-execution flows.
-pub struct StatefulValidator<S: StateReader> {
+pub struct StatefulValidator<S: StateReader + Send + Sync> {
     tx_executor: TransactionExecutor<S>,
 }
 
-impl<S: StateReader> StatefulValidator<S> {
+impl<S: StateReader + Send + Sync> StatefulValidator<S> {
     pub fn create(state: CachedState<S>, block_context: BlockContext) -> Self {
         let tx_executor =
             TransactionExecutor::new(state, block_context, TransactionExecutorConfig::default());
         Self { tx_executor }
     }
 
-    pub fn perform_validations(
+    pub async fn perform_validations(
         &mut self,
         tx: AccountTransaction,
         skip_validate: bool,
@@ -61,12 +61,12 @@ impl<S: StateReader> StatefulValidator<S> {
         // before `__validate_deploy__`. The execution already includes all necessary validations,
         // so they are skipped here.
         if let AccountTransaction::DeployAccount(_) = tx {
-            self.execute(tx)?;
+            self.execute(tx).await?;
             return Ok(());
         }
 
         let tx_context = self.tx_executor.block_context.to_tx_context(&tx);
-        self.perform_pre_validation_stage(&tx, &tx_context)?;
+        self.perform_pre_validation_stage(&tx, &tx_context).await?;
 
         if skip_validate {
             return Ok(());
@@ -75,7 +75,7 @@ impl<S: StateReader> StatefulValidator<S> {
         // `__validate__` call.
         let versioned_constants = &tx_context.block_context.versioned_constants();
         let (_optional_call_info, actual_cost) =
-            self.validate(&tx, versioned_constants.tx_initial_gas())?;
+            self.validate(&tx, versioned_constants.tx_initial_gas()).await?;
 
         // Post validations.
         PostValidationReport::verify(&tx_context, &actual_cost)?;
@@ -83,12 +83,12 @@ impl<S: StateReader> StatefulValidator<S> {
         Ok(())
     }
 
-    fn execute(&mut self, tx: AccountTransaction) -> StatefulValidatorResult<()> {
-        self.tx_executor.execute(&Transaction::AccountTransaction(tx))?;
+    async fn execute(&mut self, tx: AccountTransaction) -> StatefulValidatorResult<()> {
+        self.tx_executor.execute(&Transaction::AccountTransaction(tx)).await?;
         Ok(())
     }
 
-    fn perform_pre_validation_stage(
+    async fn perform_pre_validation_stage(
         &mut self,
         tx: &AccountTransaction,
         tx_context: &TransactionContext,
@@ -101,12 +101,12 @@ impl<S: StateReader> StatefulValidator<S> {
             tx_context,
             charge_fee,
             strict_nonce_check,
-        )?;
+        ).await?;
 
         Ok(())
     }
 
-    fn validate(
+    async fn validate(
         &mut self,
         tx: &AccountTransaction,
         mut remaining_gas: u64,
@@ -121,7 +121,7 @@ impl<S: StateReader> StatefulValidator<S> {
             tx_context.clone(),
             &mut remaining_gas,
             limit_steps_by_resources,
-        )?;
+        ).await?;
 
         let tx_receipt = TransactionReceipt::from_account_tx(
             tx,
@@ -131,7 +131,8 @@ impl<S: StateReader> StatefulValidator<S> {
                 .block_state
                 .as_mut()
                 .expect(BLOCK_STATE_ACCESS_ERR)
-                .get_actual_state_changes()?,
+                .get_actual_state_changes()
+                .await?,
             &execution_resources,
             validate_call_info.iter(),
             0,
@@ -140,7 +141,7 @@ impl<S: StateReader> StatefulValidator<S> {
         Ok((validate_call_info, tx_receipt))
     }
 
-    pub fn get_nonce(
+    pub async fn get_nonce(
         &mut self,
         account_address: ContractAddress,
     ) -> StatefulValidatorResult<Nonce> {
@@ -149,6 +150,7 @@ impl<S: StateReader> StatefulValidator<S> {
             .block_state
             .as_ref()
             .expect(BLOCK_STATE_ACCESS_ERR)
-            .get_nonce_at(account_address)?)
+            .get_nonce_at(account_address)
+            .await?)
     }
 }

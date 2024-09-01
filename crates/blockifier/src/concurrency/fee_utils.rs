@@ -22,10 +22,10 @@ mod test;
 pub(crate) const STORAGE_READ_SEQUENCER_BALANCE_INDICES: (usize, usize) = (2, 3);
 
 // Completes the fee transfer flow if needed (if the transfer was made in concurrent mode).
-pub fn complete_fee_transfer_flow(
+pub async fn complete_fee_transfer_flow<U: UpdatableState + Send + Sync>(
     tx_context: &TransactionContext,
     tx_execution_info: &mut TransactionExecutionInfo,
-    state: &mut impl UpdatableState,
+    state: &mut U,
 ) {
     if tx_context.is_sequencer_the_sender() {
         // When the sequencer is the sender, we use the sequential (full) fee transfer.
@@ -38,6 +38,7 @@ pub fn complete_fee_transfer_flow(
             tx_context.block_context.block_info.sequencer_address,
             tx_context.fee_token_address()
         )
+        .await
         // TODO(barak, 01/07/2024): Consider propagating the error.
         .unwrap_or_else(|error| {
             panic!(

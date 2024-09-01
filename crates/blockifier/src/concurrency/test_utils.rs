@@ -69,7 +69,7 @@ pub fn safe_versioned_state_for_testing(
 // Utils.
 
 // Note: this function does not mutate the state.
-pub fn create_fee_transfer_call_info<S: StateReader>(
+pub async fn create_fee_transfer_call_info<S: StateReader + Send + Sync>(
     state: &mut CachedState<S>,
     account_tx: &AccountTransaction,
     concurrency_mode: bool,
@@ -78,7 +78,7 @@ pub fn create_fee_transfer_call_info<S: StateReader>(
     let mut transactional_state = TransactionalState::create_transactional(state);
     let execution_flags = ExecutionFlags { charge_fee: true, validate: true, concurrency_mode };
     let execution_info =
-        account_tx.execute_raw(&mut transactional_state, &block_context, execution_flags).unwrap();
+        account_tx.execute_raw(&mut transactional_state, &block_context, execution_flags).await.unwrap();
 
     let execution_info = execution_info.fee_transfer_call_info.unwrap();
     transactional_state.abort();

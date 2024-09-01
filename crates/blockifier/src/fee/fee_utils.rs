@@ -81,14 +81,14 @@ pub fn get_fee_by_gas_vector(
 }
 
 /// Returns the current fee balance and a boolean indicating whether the balance covers the fee.
-pub fn get_balance_and_if_covers_fee(
-    state: &mut dyn StateReader,
+pub async fn get_balance_and_if_covers_fee<S: StateReader + Send + Sync>(
+    state: &mut S,
     tx_context: &TransactionContext,
     fee: Fee,
 ) -> TransactionFeeResult<(Felt, Felt, bool)> {
     let tx_info = &tx_context.tx_info;
     let (balance_low, balance_high) =
-        state.get_fee_token_balance(tx_info.sender_address(), tx_context.fee_token_address())?;
+        state.get_fee_token_balance(tx_info.sender_address(), tx_context.fee_token_address()).await?;
     Ok((
         balance_low,
         balance_high,
@@ -100,8 +100,8 @@ pub fn get_balance_and_if_covers_fee(
 
 /// Verifies that, given the current state, the account can cover the resource upper bounds.
 /// Error may indicate insufficient balance, or some other error.
-pub fn verify_can_pay_committed_bounds(
-    state: &mut dyn StateReader,
+pub async fn verify_can_pay_committed_bounds<S: StateReader + Send + Sync>(
+    state: &mut S,
     tx_context: &TransactionContext,
 ) -> TransactionFeeResult<()> {
     let tx_info = &tx_context.tx_info;
@@ -116,7 +116,7 @@ pub fn verify_can_pay_committed_bounds(
         TransactionInfo::Deprecated(context) => context.max_fee,
     };
     let (balance_low, balance_high, can_pay) =
-        get_balance_and_if_covers_fee(state, tx_context, committed_fee)?;
+        get_balance_and_if_covers_fee(state, tx_context, committed_fee).await?;
     if can_pay {
         Ok(())
     } else {

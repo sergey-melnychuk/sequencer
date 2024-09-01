@@ -226,9 +226,9 @@ pub const L2_GAS: &str = "0x0000000000000000000000000000000000000000000000000000
 
 /// Executes Starknet syscalls (stateful protocol hints) during the execution of an entry point
 /// call.
-pub struct SyscallHintProcessor<'a> {
+pub struct SyscallHintProcessor<'a, S: State + Send + Sync> {
     // Input for execution.
-    pub state: &'a mut dyn State,
+    pub state: &'a mut S,
     pub resources: &'a mut ExecutionResources,
     pub context: &'a mut EntryPointExecutionContext,
     pub call: CallEntryPoint,
@@ -260,9 +260,9 @@ pub struct SyscallHintProcessor<'a> {
     execution_info_ptr: Option<Relocatable>,
 }
 
-impl<'a> SyscallHintProcessor<'a> {
+impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
     pub fn new(
-        state: &'a mut dyn State,
+        state: &'a mut S,
         resources: &'a mut ExecutionResources,
         context: &'a mut EntryPointExecutionContext,
         initial_syscall_ptr: Relocatable,
@@ -512,10 +512,11 @@ impl<'a> SyscallHintProcessor<'a> {
     where
         Request: SyscallRequest + std::fmt::Debug,
         Response: SyscallResponse + std::fmt::Debug,
+        // TODO(SM): Allow async function as a callback
         ExecuteCallback: FnOnce(
             Request,
             &mut VirtualMachine,
-            &mut SyscallHintProcessor<'_>,
+            &mut SyscallHintProcessor<'_, S>,
             &mut u64, // Remaining gas.
         ) -> SyscallResult<Response>,
     {
@@ -694,24 +695,24 @@ impl<'a> SyscallHintProcessor<'a> {
         Ok(tx_info_start_ptr)
     }
 
-    pub fn get_contract_storage_at(
+    pub async fn get_contract_storage_at(
         &mut self,
         key: StorageKey,
     ) -> SyscallResult<StorageReadResponse> {
         self.accessed_keys.insert(key);
-        let value = self.state.get_storage_at(self.storage_address(), key)?;
+        let value = self.state.get_storage_at(self.storage_address(), key).await?;
         self.read_values.push(value);
 
         Ok(StorageReadResponse { value })
     }
 
-    pub fn set_contract_storage_at(
+    pub async fn set_contract_storage_at(
         &mut self,
         key: StorageKey,
         value: Felt,
     ) -> SyscallResult<StorageWriteResponse> {
         self.accessed_keys.insert(key);
-        self.state.set_storage_at(self.storage_address(), key, value)?;
+        self.state.set_storage_at(self.storage_address(), key, value).await?;
 
         Ok(StorageWriteResponse {})
     }
@@ -737,7 +738,7 @@ fn get_ptr_from_res_operand_unchecked(vm: &mut VirtualMachine, res: &ResOperand)
     (vm.get_relocatable(cell_reloc).unwrap() + &base_offset).unwrap()
 }
 
-impl ResourceTracker for SyscallHintProcessor<'_> {
+impl<S: State + Send + Sync> ResourceTracker for SyscallHintProcessor<'_, S> {
     fn consumed(&self) -> bool {
         self.context.vm_run_resources.consumed()
     }
@@ -755,7 +756,7 @@ impl ResourceTracker for SyscallHintProcessor<'_> {
     }
 }
 
-impl HintProcessorLogic for SyscallHintProcessor<'_> {
+impl<S: State + Send + Sync> HintProcessorLogic for SyscallHintProcessor<'_, S> {
     fn execute_hint(
         &mut self,
         vm: &mut VirtualMachine,
@@ -806,14 +807,14 @@ pub fn read_call_params(
     Ok((function_selector, calldata))
 }
 
-pub fn execute_inner_call(
+pub async fn execute_inner_call<S: State + Send + Sync>(
     call: CallEntryPoint,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<ReadOnlySegment> {
     let call_info =
-        call.execute(syscall_handler.state, syscall_handler.resources, syscall_handler.context)?;
+        call.execute(syscall_handler.state, syscall_handler.resources, syscall_handler.context).await?;
     let raw_retdata = &call_info.execution.retdata.0;
 
     if call_info.execution.failed {
@@ -830,9 +831,9 @@ pub fn execute_inner_call(
     Ok(retdata_segment)
 }
 
-pub fn create_retdata_segment(
+pub fn create_retdata_segment<S: State + Send + Sync>(
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     raw_retdata: &[Felt],
 ) -> SyscallResult<ReadOnlySegment> {
     let (retdata_segment_start_ptr, _) = syscall_handler.allocate_data_segment(vm, raw_retdata)?;
@@ -840,8 +841,8 @@ pub fn create_retdata_segment(
     Ok(ReadOnlySegment { start_ptr: retdata_segment_start_ptr, length: raw_retdata.len() })
 }
 
-pub fn execute_library_call(
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+pub async fn execute_library_call<S: State + Send + Sync>(
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     vm: &mut VirtualMachine,
     class_hash: ClassHash,
     call_to_external: bool,
@@ -864,7 +865,7 @@ pub fn execute_library_call(
         initial_gas: *remaining_gas,
     };
 
-    execute_inner_call(entry_point, vm, syscall_handler, remaining_gas).map_err(|error| {
+    execute_inner_call(entry_point, vm, syscall_handler, remaining_gas).await.map_err(|error| {
         error.as_lib_call_execution_error(
             class_hash,
             syscall_handler.storage_address(),

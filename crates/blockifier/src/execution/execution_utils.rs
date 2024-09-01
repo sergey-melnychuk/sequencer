@@ -44,10 +44,10 @@ pub type Args = Vec<CairoArg>;
 pub const SEGMENT_ARENA_BUILTIN_SIZE: usize = 3;
 
 /// Executes a specific call to a contract entry point and returns its output.
-pub fn execute_entry_point_call(
+pub fn execute_entry_point_call<S: State + Send + Sync>(
     call: CallEntryPoint,
     contract_class: ContractClass,
-    state: &mut dyn State,
+    state: &mut S,
     resources: &mut ExecutionResources,
     context: &mut EntryPointExecutionContext,
 ) -> EntryPointExecutionResult<CallInfo> {
@@ -204,8 +204,8 @@ impl ReadOnlySegments {
 
 /// Instantiates the given class and assigns it an address.
 /// Returns the call info of the deployed class' constructor execution.
-pub fn execute_deployment(
-    state: &mut dyn State,
+pub async fn execute_deployment<S: State + Send + Sync>(
+    state: &mut S,
     resources: &mut ExecutionResources,
     context: &mut EntryPointExecutionContext,
     ctor_context: ConstructorContext,
@@ -216,7 +216,7 @@ pub fn execute_deployment(
     // visible from it.
     let deployed_contract_address = ctor_context.storage_address;
     let current_class_hash =
-        state.get_class_hash_at(deployed_contract_address).map_err(|error| {
+        state.get_class_hash_at(deployed_contract_address).await.map_err(|error| {
             ConstructorEntryPointExecutionError::new(error.into(), &ctor_context, None)
         })?;
     if current_class_hash != ClassHash::default() {
@@ -227,7 +227,7 @@ pub fn execute_deployment(
         ));
     }
 
-    state.set_class_hash_at(deployed_contract_address, ctor_context.class_hash).map_err(
+    state.set_class_hash_at(deployed_contract_address, ctor_context.class_hash).await.map_err(
         |error| ConstructorEntryPointExecutionError::new(error.into(), &ctor_context, None),
     )?;
 
@@ -238,7 +238,7 @@ pub fn execute_deployment(
         ctor_context,
         constructor_calldata,
         remaining_gas,
-    )
+    ).await
 }
 
 pub fn write_felt(

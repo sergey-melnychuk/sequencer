@@ -48,6 +48,7 @@ use crate::execution::execution_utils::{
     ReadOnlySegment,
 };
 use crate::execution::syscalls::hint_processor::{INVALID_INPUT_LENGTH_ERROR, OUT_OF_GAS_ERROR};
+use crate::state::state_api::State;
 use crate::transaction::transaction_utils::update_remaining_gas;
 use crate::versioned_constants::{EventLimits, VersionedConstants};
 
@@ -173,14 +174,14 @@ impl SyscallRequest for CallContractRequest {
 
 pub type CallContractResponse = SingleSegmentResponse;
 
-pub fn call_contract(
+pub async fn call_contract<S: State + Send + Sync>(
     request: CallContractRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<CallContractResponse> {
     let storage_address = request.contract_address;
-    let class_hash = syscall_handler.state.get_class_hash_at(storage_address)?;
+    let class_hash = syscall_handler.state.get_class_hash_at(storage_address).await?;
     let selector = request.function_selector;
     if syscall_handler.is_validate_mode() && syscall_handler.storage_address() != storage_address {
         return Err(SyscallExecutionError::InvalidSyscallInExecutionMode {
@@ -200,6 +201,7 @@ pub fn call_contract(
         initial_gas: *remaining_gas,
     };
     let retdata_segment = execute_inner_call(entry_point, vm, syscall_handler, remaining_gas)
+        .await
         .map_err(|error| {
             error.as_call_contract_execution_error(class_hash, storage_address, selector)
         })?;
@@ -249,10 +251,10 @@ impl SyscallResponse for DeployResponse {
     }
 }
 
-pub fn deploy(
+pub async fn deploy<S: State + Send + Sync>(
     request: DeployRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<DeployResponse> {
     let deployer_address = syscall_handler.storage_address();
@@ -280,7 +282,7 @@ pub fn deploy(
         ctor_context,
         request.constructor_calldata,
         *remaining_gas,
-    )?;
+    ).await?;
 
     let constructor_retdata =
         create_retdata_segment(vm, syscall_handler, &call_info.execution.retdata.0)?;
@@ -336,10 +338,10 @@ pub fn exceeds_event_size_limit(
     Ok(())
 }
 
-pub fn emit_event(
+pub fn emit_event<S: State + Send + Sync>(
     request: EmitEventRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<EmitEventResponse> {
     let execution_context = &mut syscall_handler.context;
@@ -393,10 +395,10 @@ impl SyscallResponse for GetBlockHashResponse {
 /// Returns the expected block hash if the given block was created at least
 /// [constants::STORED_BLOCK_HASH_BUFFER] blocks before the current block. Otherwise, returns an
 /// error.
-pub fn get_block_hash(
+pub async fn get_block_hash<S: State + Send + Sync>(
     request: GetBlockHashRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<GetBlockHashResponse> {
     if syscall_handler.is_validate_mode() {
@@ -422,7 +424,7 @@ pub fn get_block_hash(
     let block_hash_contract_address =
         ContractAddress::try_from(Felt::from(constants::BLOCK_HASH_CONTRACT_ADDRESS))?;
     let block_hash =
-        BlockHash(syscall_handler.state.get_storage_at(block_hash_contract_address, key)?);
+        BlockHash(syscall_handler.state.get_storage_at(block_hash_contract_address, key).await?);
     Ok(GetBlockHashResponse { block_hash })
 }
 
@@ -441,10 +443,10 @@ impl SyscallResponse for GetExecutionInfoResponse {
         Ok(())
     }
 }
-pub fn get_execution_info(
+pub fn get_execution_info<S: State + Send + Sync>(
     _request: GetExecutionInfoRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<GetExecutionInfoResponse> {
     let execution_info_ptr = syscall_handler.get_or_allocate_execution_info_segment(vm)?;
@@ -472,10 +474,10 @@ impl SyscallRequest for LibraryCallRequest {
 
 type LibraryCallResponse = CallContractResponse;
 
-pub fn library_call(
+pub async fn library_call<S: State + Send + Sync>(
     request: LibraryCallRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<LibraryCallResponse> {
     let call_to_external = true;
@@ -487,17 +489,17 @@ pub fn library_call(
         request.function_selector,
         request.calldata,
         remaining_gas,
-    )?;
+    ).await?;
 
     Ok(LibraryCallResponse { segment: retdata_segment })
 }
 
 // LibraryCallL1Handler syscall.
 
-pub fn library_call_l1_handler(
+pub async fn library_call_l1_handler<S: State + Send + Sync>(
     request: LibraryCallRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<LibraryCallResponse> {
     let call_to_external = false;
@@ -509,7 +511,7 @@ pub fn library_call_l1_handler(
         request.function_selector,
         request.calldata,
         remaining_gas,
-    )?;
+    ).await?;
 
     Ok(LibraryCallResponse { segment: retdata_segment })
 }
@@ -531,15 +533,15 @@ impl SyscallRequest for ReplaceClassRequest {
 
 pub type ReplaceClassResponse = EmptyResponse;
 
-pub fn replace_class(
+pub async fn replace_class<S: State + Send + Sync>(
     request: ReplaceClassRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<ReplaceClassResponse> {
     // Ensure the class is declared (by reading it), and of type V1.
     let class_hash = request.class_hash;
-    let class = syscall_handler.state.get_compiled_contract_class(class_hash)?;
+    let class = syscall_handler.state.get_compiled_contract_class(class_hash).await?;
 
     match class {
         ContractClass::V0(_) => {
@@ -548,7 +550,8 @@ pub fn replace_class(
         ContractClass::V1(_) => {
             syscall_handler
                 .state
-                .set_class_hash_at(syscall_handler.storage_address(), class_hash)?;
+                .set_class_hash_at(syscall_handler.storage_address(), class_hash)
+                .await?;
             Ok(ReplaceClassResponse {})
         }
     }
@@ -573,10 +576,10 @@ impl SyscallRequest for SendMessageToL1Request {
 
 type SendMessageToL1Response = EmptyResponse;
 
-pub fn send_message_to_l1(
+pub fn send_message_to_l1<S: State + Send + Sync>(
     request: SendMessageToL1Request,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<SendMessageToL1Response> {
     let execution_context = &mut syscall_handler.context;
@@ -622,13 +625,13 @@ impl SyscallResponse for StorageReadResponse {
     }
 }
 
-pub fn storage_read(
+pub async fn storage_read<S: State + Send + Sync>(
     request: StorageReadRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<StorageReadResponse> {
-    syscall_handler.get_contract_storage_at(request.address)
+    syscall_handler.get_contract_storage_at(request.address).await
 }
 
 // StorageWrite syscall.
@@ -654,13 +657,13 @@ impl SyscallRequest for StorageWriteRequest {
 
 pub type StorageWriteResponse = EmptyResponse;
 
-pub fn storage_write(
+pub async fn storage_write<S: State + Send + Sync>(
     request: StorageWriteRequest,
     _vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<StorageWriteResponse> {
-    syscall_handler.set_contract_storage_at(request.address, request.value)
+    syscall_handler.set_contract_storage_at(request.address, request.value).await
 }
 
 // Keccak syscall.
@@ -695,10 +698,10 @@ impl SyscallResponse for KeccakResponse {
     }
 }
 
-pub fn keccak(
+pub fn keccak<S: State + Send + Sync>(
     request: KeccakRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     remaining_gas: &mut u64,
 ) -> SyscallResult<KeccakResponse> {
     let input_length = (request.input_end - request.input_start)?;
@@ -780,10 +783,10 @@ impl SyscallResponse for Sha256ProcessBlockResponse {
     }
 }
 
-pub fn sha_256_process_block(
+pub fn sha_256_process_block<S: State + Send + Sync>(
     request: Sha256ProcessBlockRequest,
     vm: &mut VirtualMachine,
-    syscall_handler: &mut SyscallHintProcessor<'_>,
+    syscall_handler: &mut SyscallHintProcessor<'_, S>,
     _remaining_gas: &mut u64,
 ) -> SyscallResult<Sha256ProcessBlockResponse> {
     const SHA256_BLOCK_SIZE: usize = 16;

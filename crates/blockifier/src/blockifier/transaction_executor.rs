@@ -45,7 +45,7 @@ pub type TransactionExecutorResult<T> = Result<T, TransactionExecutorError>;
 pub type VisitedSegmentsMapping = Vec<(ClassHash, Vec<usize>)>;
 
 // TODO(Gilad): make this hold TransactionContext instead of BlockContext.
-pub struct TransactionExecutor<S: StateReader> {
+pub struct TransactionExecutor<S: StateReader + Send + Sync> {
     pub block_context: BlockContext,
     pub bouncer: Bouncer,
     // Note: this config must not affect the execution result (e.g. state diff and traces).
@@ -59,7 +59,7 @@ pub struct TransactionExecutor<S: StateReader> {
     pub block_state: Option<CachedState<S>>,
 }
 
-impl<S: StateReader> TransactionExecutor<S> {
+impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
     pub fn new(
         block_state: CachedState<S>,
         block_context: BlockContext,
@@ -83,7 +83,7 @@ impl<S: StateReader> TransactionExecutor<S> {
     /// Executes the given transaction on the state maintained by the executor.
     /// Returns the execution result (info or error) if there is room for the transaction;
     /// Otherwise, returns BlockFull error.
-    pub fn execute(
+    pub async fn execute(
         &mut self,
         tx: &Transaction,
     ) -> TransactionExecutorResult<TransactionExecutionInfo> {
@@ -94,17 +94,17 @@ impl<S: StateReader> TransactionExecutor<S> {
         let execution_flags =
             ExecutionFlags { charge_fee: true, validate: true, concurrency_mode: false };
         let tx_execution_result =
-            tx.execute_raw(&mut transactional_state, &self.block_context, execution_flags);
+            tx.execute_raw(&mut transactional_state, &self.block_context, execution_flags).await;
         match tx_execution_result {
             Ok(tx_execution_info) => {
                 let tx_state_changes_keys =
-                    transactional_state.get_actual_state_changes()?.into_keys();
+                    transactional_state.get_actual_state_changes().await?.into_keys();
                 self.bouncer.try_update(
                     &transactional_state,
                     &tx_state_changes_keys,
                     &tx_execution_info.summarize(),
                     &tx_execution_info.transaction_receipt.resources,
-                )?;
+                ).await?;
                 transactional_state.commit();
                 Ok(tx_execution_info)
             }
@@ -115,13 +115,13 @@ impl<S: StateReader> TransactionExecutor<S> {
         }
     }
 
-    pub fn execute_txs_sequentially(
+    pub async fn execute_txs_sequentially(
         &mut self,
         txs: &[Transaction],
     ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
         let mut results = Vec::new();
         for tx in txs {
-            match self.execute(tx) {
+            match self.execute(tx).await {
                 Ok(tx_execution_info) => results.push(Ok(tx_execution_info)),
                 Err(TransactionExecutorError::BlockFull) => break,
                 Err(error) => results.push(Err(error)),
@@ -140,32 +140,32 @@ impl<S: StateReader> TransactionExecutor<S> {
 
     /// Returns the state diff, a list of contract class hash with the corresponding list of
     /// visited segment values and the block weights.
-    pub fn finalize(
+    pub async fn finalize(
         &mut self,
     ) -> TransactionExecutorResult<(CommitmentStateDiff, VisitedSegmentsMapping, BouncerWeights)>
     {
         // Get the visited segments of each contract class.
         // This is done by taking all the visited PCs of each contract, and compress them to one
         // representative for each visited segment.
-        let visited_segments = self
+        let visited_pcs = &self
             .block_state
             .as_ref()
             .expect(BLOCK_STATE_ACCESS_ERR)
-            .visited_pcs
-            .iter()
-            .map(|(class_hash, class_visited_pcs)| -> TransactionExecutorResult<_> {
-                let contract_class = self
-                    .block_state
-                    .as_ref()
-                    .expect(BLOCK_STATE_ACCESS_ERR)
-                    .get_compiled_contract_class(*class_hash)?;
-                Ok((*class_hash, contract_class.get_visited_segments(class_visited_pcs)?))
-            })
-            .collect::<TransactionExecutorResult<_>>()?;
-
+            .visited_pcs;
+        let mut visited_segments = Vec::with_capacity(visited_pcs.len());
+        for (class_hash, class_visited_pcs) in visited_pcs.iter() {
+            let contract_class = self
+                .block_state
+                .as_ref()
+                .expect(BLOCK_STATE_ACCESS_ERR)
+                .get_compiled_contract_class(*class_hash)
+                .await?;
+            visited_segments.push((*class_hash, contract_class.get_visited_segments(class_visited_pcs)?));
+        }
+         
         log::debug!("Final block weights: {:?}.", self.bouncer.get_accumulated_weights());
         Ok((
-            self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR).to_state_diff()?.into(),
+            self.block_state.as_mut().expect(BLOCK_STATE_ACCESS_ERR).to_state_diff().await?.into(),
             visited_segments,
             *self.bouncer.get_accumulated_weights(),
         ))
@@ -176,13 +176,13 @@ impl<S: StateReader + Send + Sync> TransactionExecutor<S> {
     /// Executes the given transactions on the state maintained by the executor.
     /// Stops if and when there is no more room in the block, and returns the executed transactions'
     /// results.
-    pub fn execute_txs(
+    pub async fn execute_txs(
         &mut self,
         txs: &[Transaction],
     ) -> Vec<TransactionExecutorResult<TransactionExecutionInfo>> {
         if !self.config.concurrency_config.enabled {
             log::debug!("Executing transactions sequentially.");
-            self.execute_txs_sequentially(txs)
+            self.execute_txs_sequentially(txs).await
         } else {
             log::debug!("Executing transactions concurrently.");
             let chunk_size = self.config.concurrency_config.chunk_size;
