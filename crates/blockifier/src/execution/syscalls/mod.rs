@@ -338,7 +338,7 @@ pub fn exceeds_event_size_limit(
     Ok(())
 }
 
-pub fn emit_event<S: State + Send + Sync>(
+pub async fn emit_event<S: State + Send + Sync>(
     request: EmitEventRequest,
     _vm: &mut VirtualMachine,
     syscall_handler: &mut SyscallHintProcessor<'_, S>,
@@ -443,7 +443,7 @@ impl SyscallResponse for GetExecutionInfoResponse {
         Ok(())
     }
 }
-pub fn get_execution_info<S: State + Send + Sync>(
+pub async fn get_execution_info<S: State + Send + Sync>(
     _request: GetExecutionInfoRequest,
     vm: &mut VirtualMachine,
     syscall_handler: &mut SyscallHintProcessor<'_, S>,
@@ -576,7 +576,7 @@ impl SyscallRequest for SendMessageToL1Request {
 
 type SendMessageToL1Response = EmptyResponse;
 
-pub fn send_message_to_l1<S: State + Send + Sync>(
+pub async fn send_message_to_l1<S: State + Send + Sync>(
     request: SendMessageToL1Request,
     _vm: &mut VirtualMachine,
     syscall_handler: &mut SyscallHintProcessor<'_, S>,
@@ -698,7 +698,7 @@ impl SyscallResponse for KeccakResponse {
     }
 }
 
-pub fn keccak<S: State + Send + Sync>(
+pub async fn keccak<S: State + Send + Sync>(
     request: KeccakRequest,
     vm: &mut VirtualMachine,
     syscall_handler: &mut SyscallHintProcessor<'_, S>,
@@ -783,7 +783,7 @@ impl SyscallResponse for Sha256ProcessBlockResponse {
     }
 }
 
-pub fn sha_256_process_block<S: State + Send + Sync>(
+pub async fn sha_256_process_block<S: State + Send + Sync>(
     request: Sha256ProcessBlockRequest,
     vm: &mut VirtualMachine,
     syscall_handler: &mut SyscallHintProcessor<'_, S>,

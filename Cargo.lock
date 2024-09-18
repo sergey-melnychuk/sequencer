@@ -1002,6 +1002,7 @@ dependencies = [
  "num-rational 0.4.2",
  "num-traits 0.2.19",
  "once_cell",
+ "parking_lot 0.12.3",
  "paste",
  "phf",
  "pretty_assertions",

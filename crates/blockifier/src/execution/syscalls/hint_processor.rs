@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 
 use cairo_lang_casm::hints::{Hint, StarknetHint};
 use cairo_lang_casm::operand::{BinOpOperand, DerefOrImmediate, Operation, Register, ResOperand};
@@ -226,7 +227,7 @@ pub const L2_GAS: &str = "0x0000000000000000000000000000000000000000000000000000
 
 /// Executes Starknet syscalls (stateful protocol hints) during the execution of an entry point
 /// call.
-pub struct SyscallHintProcessor<'a, S: State + Send + Sync> {
+pub struct SyscallHintProcessor<'a, S: State + Send + Sync + 'a> {
     // Input for execution.
     pub state: &'a mut S,
     pub resources: &'a mut ExecutionResources,
@@ -260,7 +261,7 @@ pub struct SyscallHintProcessor<'a, S: State + Send + Sync> {
     execution_info_ptr: Option<Relocatable>,
 }
 
-impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
+impl<'a, S: State + Send + Sync + 'a> SyscallHintProcessor<'a, S> {
     pub fn new(
         state: &'a mut S,
         resources: &'a mut ExecutionResources,
@@ -324,7 +325,7 @@ impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
 
     /// Infers and executes the next syscall.
     /// Must comply with the API of a hint function, as defined by the `HintProcessor`.
-    pub fn execute_next_syscall(
+    pub async fn execute_next_syscall(
         &mut self,
         vm: &mut VirtualMachine,
         hint: &StarknetHint,
@@ -348,113 +349,120 @@ impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
         match selector {
             SyscallSelector::CallContract => self.execute_syscall(
                 vm,
-                call_contract,
+                |
+                    request: super::CallContractRequest,
+                    vm: &mut VirtualMachine,
+                    syscall_handler: &mut SyscallHintProcessor<'_, S>,
+                    remaining_gas: &mut u64,
+                | async {
+                    call_contract(request, vm, syscall_handler, remaining_gas).await
+                },
                 self.context.gas_costs().call_contract_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Deploy => {
-                self.execute_syscall(vm, deploy, self.context.gas_costs().deploy_gas_cost)
+                self.execute_syscall(vm, deploy, self.context.gas_costs().deploy_gas_cost).await
             }
             SyscallSelector::EmitEvent => {
-                self.execute_syscall(vm, emit_event, self.context.gas_costs().emit_event_gas_cost)
+                self.execute_syscall(vm, emit_event, self.context.gas_costs().emit_event_gas_cost).await
             }
             SyscallSelector::GetBlockHash => self.execute_syscall(
                 vm,
                 get_block_hash,
                 self.context.gas_costs().get_block_hash_gas_cost,
-            ),
+            ).await,
             SyscallSelector::GetExecutionInfo => self.execute_syscall(
                 vm,
                 get_execution_info,
                 self.context.gas_costs().get_execution_info_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Keccak => {
-                self.execute_syscall(vm, keccak, self.context.gas_costs().keccak_gas_cost)
+                self.execute_syscall(vm, keccak, self.context.gas_costs().keccak_gas_cost).await
             }
             SyscallSelector::Sha256ProcessBlock => self.execute_syscall(
                 vm,
                 sha_256_process_block,
                 self.context.gas_costs().sha256_process_block_gas_cost,
-            ),
+            ).await,
             SyscallSelector::LibraryCall => self.execute_syscall(
                 vm,
                 library_call,
                 self.context.gas_costs().library_call_gas_cost,
-            ),
+            ).await,
             SyscallSelector::LibraryCallL1Handler => self.execute_syscall(
                 vm,
                 library_call_l1_handler,
                 self.context.gas_costs().library_call_gas_cost,
-            ),
+            ).await,
             SyscallSelector::ReplaceClass => self.execute_syscall(
                 vm,
                 replace_class,
                 self.context.gas_costs().replace_class_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256k1Add => self.execute_syscall(
                 vm,
                 secp256k1_add,
                 self.context.gas_costs().secp256k1_add_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256k1GetPointFromX => self.execute_syscall(
                 vm,
                 secp256k1_get_point_from_x,
                 self.context.gas_costs().secp256k1_get_point_from_x_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256k1GetXy => self.execute_syscall(
                 vm,
                 secp256k1_get_xy,
                 self.context.gas_costs().secp256k1_get_xy_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256k1Mul => self.execute_syscall(
                 vm,
                 secp256k1_mul,
                 self.context.gas_costs().secp256k1_mul_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256k1New => self.execute_syscall(
                 vm,
                 secp256k1_new,
                 self.context.gas_costs().secp256k1_new_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256r1Add => self.execute_syscall(
                 vm,
                 secp256r1_add,
                 self.context.gas_costs().secp256r1_add_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256r1GetPointFromX => self.execute_syscall(
                 vm,
                 secp256r1_get_point_from_x,
                 self.context.gas_costs().secp256r1_get_point_from_x_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256r1GetXy => self.execute_syscall(
                 vm,
                 secp256r1_get_xy,
                 self.context.gas_costs().secp256r1_get_xy_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256r1Mul => self.execute_syscall(
                 vm,
                 secp256r1_mul,
                 self.context.gas_costs().secp256r1_mul_gas_cost,
-            ),
+            ).await,
             SyscallSelector::Secp256r1New => self.execute_syscall(
                 vm,
                 secp256r1_new,
                 self.context.gas_costs().secp256r1_new_gas_cost,
-            ),
+            ).await,
             SyscallSelector::SendMessageToL1 => self.execute_syscall(
                 vm,
                 send_message_to_l1,
                 self.context.gas_costs().send_message_to_l1_gas_cost,
-            ),
+            ).await,
             SyscallSelector::StorageRead => self.execute_syscall(
                 vm,
                 storage_read,
                 self.context.gas_costs().storage_read_gas_cost,
-            ),
+            ).await,
             SyscallSelector::StorageWrite => self.execute_syscall(
                 vm,
                 storage_write,
                 self.context.gas_costs().storage_write_gas_cost,
-            ),
+            ).await,
             _ => Err(HintError::UnknownHint(
                 format!("Unsupported syscall selector {selector:?}.").into(),
             )),
@@ -503,22 +511,23 @@ impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
         self.allocate_data_segment(vm, &flat_resource_bounds)
     }
 
-    fn execute_syscall<Request, Response, ExecuteCallback>(
+    async fn execute_syscall<Request, Response, ExecuteCallback, Fut>(
         &mut self,
         vm: &mut VirtualMachine,
         execute_callback: ExecuteCallback,
         syscall_gas_cost: u64,
     ) -> HintExecutionResult
     where
-        Request: SyscallRequest + std::fmt::Debug,
-        Response: SyscallResponse + std::fmt::Debug,
+        Request: SyscallRequest + std::fmt::Debug + Send,
+        Response: SyscallResponse + std::fmt::Debug + Send,
         // TODO(SM): Allow async function as a callback
-        ExecuteCallback: FnOnce(
+        ExecuteCallback: Fn(
             Request,
             &mut VirtualMachine,
             &mut SyscallHintProcessor<'_, S>,
             &mut u64, // Remaining gas.
-        ) -> SyscallResult<Response>,
+        ) -> Fut + Send,
+        Fut: Future<Output = SyscallResult<Response>>,
     {
         // Refund `SYSCALL_BASE_GAS_COST` as it was pre-charged.
         let required_gas = syscall_gas_cost - self.context.gas_costs().syscall_base_gas_cost;
@@ -539,7 +548,7 @@ impl<'a, S: State + Send + Sync> SyscallHintProcessor<'a, S> {
 
         // Execute.
         let mut remaining_gas = gas_counter - required_gas;
-        let original_response = execute_callback(request, vm, self, &mut remaining_gas);
+        let original_response = execute_callback(request, vm, self, &mut remaining_gas).await;
         let response = match original_response {
             Ok(response) => {
                 SyscallResponseWrapper::Success { gas_counter: remaining_gas, response }
@@ -756,8 +765,10 @@ impl<S: State + Send + Sync> ResourceTracker for SyscallHintProcessor<'_, S> {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 impl<S: State + Send + Sync> HintProcessorLogic for SyscallHintProcessor<'_, S> {
-    fn execute_hint(
+    async fn execute_hint(
         &mut self,
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
@@ -767,12 +778,12 @@ impl<S: State + Send + Sync> HintProcessorLogic for SyscallHintProcessor<'_, S> 
         let hint = hint_data.downcast_ref::<Hint>().ok_or(HintError::WrongHintData)?;
         match hint {
             Hint::Core(hint) => execute_core_hint_base(vm, exec_scopes, hint),
-            Hint::Starknet(hint) => self.execute_next_syscall(vm, hint),
+            Hint::Starknet(hint) => self.execute_next_syscall(vm, hint).await,
         }
     }
 
     /// Trait function to store hint in the hint processor by string.
-    fn compile_hint(
+    async fn compile_hint(
         &self,
         hint_code: &str,
         _ap_tracking_data: &ApTracking,
