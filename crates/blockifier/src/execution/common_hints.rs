@@ -1,6 +1,6 @@
 // use std::collections::HashMap;
 use std::ops::Shl;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use cairo_vm::hint_processor::builtin_hint_processor::builtin_hint_processor_definition::{
     BuiltinHintProcessor,
@@ -87,14 +87,14 @@ pub fn normalize_address_set_is_250(
 
 /// Extend the builtin hint processor with common hints.
 pub fn extended_builtin_hint_processor() -> BuiltinHintProcessor {
-    let extra_hints: hashbrown::HashMap<String, Rc<HintFunc>> = hashbrown::HashMap::from([
+    let extra_hints: hashbrown::HashMap<String, Arc<HintFunc>> = hashbrown::HashMap::from([
         (
             NORMALIZE_ADDRESS_SET_IS_SMALL_HINT.to_string(),
-            Rc::new(HintFunc(Box::new(normalize_address_set_is_small))),
+            Arc::new(HintFunc(Box::new(normalize_address_set_is_small))),
         ),
         (
             NORMALIZE_ADDRESS_SET_IS_250_HINT.to_string(),
-            Rc::new(HintFunc(Box::new(normalize_address_set_is_250))),
+            Arc::new(HintFunc(Box::new(normalize_address_set_is_250))),
         ),
     ]);
     BuiltinHintProcessor::new(extra_hints, RunResources::default())
