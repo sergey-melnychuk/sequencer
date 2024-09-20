@@ -1781,6 +1781,7 @@ dependencies = [
  "nom",
  "num-bigint 0.4.6",
  "num-integer",
+ "num-prime",
  "num-traits 0.2.19",
  "rand 0.8.5",
  "rust_decimal",
@@ -1791,6 +1792,7 @@ dependencies = [
  "starknet-crypto 0.6.2",
  "starknet-types-core",
  "thiserror-no-std",
+ "zip",
 ]
 
 [[package]]
@@ -6062,6 +6064,33 @@ dependencies = [
  "autocfg 1.3.0",
  "num-integer",
  "num-traits 0.2.19",
+]
+
+[[package]]
+name = "num-modular"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64a5fe11d4135c3bcdf3a95b18b194afa9608a5f6ff034f5d857bc9a27fb0119"
+dependencies = [
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-traits 0.2.19",
+]
+
+[[package]]
+name = "num-prime"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e238432a7881ec7164503ccc516c014bf009be7984cde1ba56837862543bdec3"
+dependencies = [
+ "bitvec",
+ "either",
+ "lru",
+ "num-bigint 0.4.6",
+ "num-integer",
+ "num-modular",
+ "num-traits 0.2.19",
+ "rand 0.8.5",
 ]
 
 [[package]]
