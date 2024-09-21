@@ -1,5 +1,11 @@
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "cairo-vm-std")]
+use std::collections::HashMap;
+#[cfg(not(feature = "cairo-vm-std"))]
+use hashbrown::HashMap;
+
+use std::collections::HashSet;
 
 use cairo_vm::hint_processor::builtin_hint_processor::builtin_hint_processor_definition::{
     BuiltinHintProcessor,
@@ -472,7 +478,7 @@ impl HintProcessorLogic for DeprecatedSyscallHintProcessor<'_> {
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
         hint_data: &Box<dyn Any>,
-        constants: &hashbrown::HashMap<String, Felt>,
+        constants: &HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<HintProcessorData>().ok_or(HintError::WrongHintData)?;
         if hint_code::SYSCALL_HINTS.contains(hint.code.as_str()) {

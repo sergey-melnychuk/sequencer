@@ -1,5 +1,11 @@
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+
+#[cfg(feature = "cairo-vm-std")]
+use std::collections::HashMap;
+#[cfg(not(feature = "cairo-vm-std"))]
+use hashbrown::HashMap;
+
+use std::collections::HashSet;
 
 use cairo_lang_casm::hints::{Hint, StarknetHint};
 use cairo_lang_casm::operand::{BinOpOperand, DerefOrImmediate, Operation, Register, ResOperand};
@@ -761,7 +767,7 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         vm: &mut VirtualMachine,
         exec_scopes: &mut ExecutionScopes,
         hint_data: &Box<dyn Any>,
-        _constants: &hashbrown::HashMap<String, Felt>,
+        _constants: &HashMap<String, Felt>,
     ) -> HintExecutionResult {
         let hint = hint_data.downcast_ref::<Hint>().ok_or(HintError::WrongHintData)?;
         match hint {
@@ -775,7 +781,7 @@ impl HintProcessorLogic for SyscallHintProcessor<'_> {
         &self,
         hint_code: &str,
         _ap_tracking_data: &ApTracking,
-        _reference_ids: &hashbrown::HashMap<String, usize>,
+        _reference_ids: &HashMap<String, usize>,
         _references: &[HintReference],
     ) -> Result<Box<dyn Any>, VirtualMachineError> {
         Ok(Box::new(self.hints[hint_code].clone()))

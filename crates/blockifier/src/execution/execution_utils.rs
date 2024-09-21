@@ -1,4 +1,7 @@
-// use std::collections::HashMap;
+#[cfg(feature = "cairo-vm-std")]
+use std::collections::HashMap;
+#[cfg(not(feature = "cairo-vm-std"))]
+use hashbrown::HashMap;
 
 use cairo_lang_runner::casm_run::format_next_item;
 use cairo_vm::serde::deserialize_program::{
@@ -118,10 +121,10 @@ pub fn felt_range_from_ptr(
 
 // TODO(Elin,01/05/2023): aim to use LC's implementation once it's in a separate crate.
 pub fn sn_api_to_cairo_vm_program(program: DeprecatedProgram) -> Result<Program, ProgramError> {
-    let identifiers = serde_json::from_value::<hashbrown::HashMap<String, Identifier>>(program.identifiers)?;
+    let identifiers = serde_json::from_value::<HashMap<String, Identifier>>(program.identifiers)?;
     let builtins = serde_json::from_value(program.builtins)?;
     let data = deserialize_array_of_bigint_hex(program.data)?;
-    let hints = serde_json::from_value::<hashbrown::HashMap<usize, Vec<HintParams>>>(program.hints)?;
+    let hints = serde_json::from_value::<HashMap<usize, Vec<HintParams>>>(program.hints)?;
     let main = None;
     let error_message_attributes = match program.attributes {
         serde_json::Value::Null => vec![],
@@ -284,6 +287,6 @@ pub fn poseidon_hash_many_cost(data_length: usize) -> ExecutionResources {
             + (data_length % 2) * 3
             + 21,
         n_memory_holes: 0,
-        builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::poseidon, data_length / 2 + 1)]),
+        builtin_instance_counter: HashMap::from([(BuiltinName::poseidon, data_length / 2 + 1)]),
     }
 }

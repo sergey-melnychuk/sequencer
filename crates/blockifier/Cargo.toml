@@ -10,7 +10,7 @@ description = "The transaction-executing component in the Starknet sequencer."
 workspace = true
 
 [features]
-cairo-vm-std = ["cairo-vm/std"]
+cairo-vm-std = ["cairo-vm/std", "cairo-lang-runner/cairo-vm-std"]
 concurrency = []
 jemalloc = ["dep:tikv-jemallocator"]
 testing = ["rand", "rstest"]
@@ -28,8 +28,7 @@ cairo-lang-casm = { workspace = true, features = ["parity-scale-codec"] }
 cairo-lang-runner.workspace = true
 cairo-lang-starknet-classes.workspace = true
 cairo-lang-utils.workspace = true
-#cairo-vm.workspace = true
-cairo-vm = { git = "https://github.com/sergey-melnychuk/cairo-vm.git", branch = "beerus-wasm", version = "=1.0.1", default-features = false }
+cairo-vm.workspace = true
 derive_more.workspace = true
 hashbrown = "0.14.5"
 indexmap.workspace = true

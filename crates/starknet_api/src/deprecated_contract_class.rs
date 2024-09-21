@@ -1,4 +1,8 @@
+#[cfg(feature = "cairo-vm-std")]
 use std::collections::HashMap;
+#[cfg(not(feature = "cairo-vm-std"))]
+use hashbrown::HashMap;
+
 use std::num::ParseIntError;
 
 use cairo_lang_starknet_classes::casm_contract_class::CasmContractEntryPoint;

@@ -1,4 +1,9 @@
-use std::collections::{HashMap, HashSet};
+#[cfg(feature = "cairo-vm-std")]
+use std::collections::HashMap;
+#[cfg(not(feature = "cairo-vm-std"))]
+use hashbrown::HashMap;
+
+use std::collections::HashSet;
 
 use cairo_vm::types::builtin_name::BuiltinName;
 use cairo_vm::vm::runners::cairo_runner::ExecutionResources;
@@ -177,8 +182,34 @@ impl BuiltinCount {
     }
 }
 
-impl From<HashMapWrapper> for BuiltinCount {
-    fn from(mut data: HashMapWrapper) -> Self {
+impl From<hashbrown::HashMap<BuiltinName, usize>> for BuiltinCount {
+    fn from(mut data: hashbrown::HashMap<BuiltinName, usize>) -> Self {
+        // TODO(yael 24/3/24): replace the unwrap_or_default with expect, once the
+        // ExecutionResources contains all the builtins.
+        // The keccak config we get from python is not always present.
+        let builtin_count = Self {
+            add_mod: data.remove(&BuiltinName::add_mod).unwrap_or_default(),
+            bitwise: data.remove(&BuiltinName::bitwise).unwrap_or_default(),
+            ecdsa: data.remove(&BuiltinName::ecdsa).unwrap_or_default(),
+            ec_op: data.remove(&BuiltinName::ec_op).unwrap_or_default(),
+            keccak: data.remove(&BuiltinName::keccak).unwrap_or_default(),
+            mul_mod: data.remove(&BuiltinName::mul_mod).unwrap_or_default(),
+            pedersen: data.remove(&BuiltinName::pedersen).unwrap_or_default(),
+            poseidon: data.remove(&BuiltinName::poseidon).unwrap_or_default(),
+            range_check: data.remove(&BuiltinName::range_check).unwrap_or_default(),
+            range_check96: data.remove(&BuiltinName::range_check96).unwrap_or_default(),
+        };
+        assert!(
+            data.is_empty(),
+            "The following keys do not exist in BuiltinCount: {:?} ",
+            data.keys()
+        );
+        builtin_count
+    }
+}
+
+impl From<std::collections::HashMap<BuiltinName, usize>> for BuiltinCount {
+    fn from(mut data: std::collections::HashMap<BuiltinName, usize>) -> Self {
         // TODO(yael 24/3/24): replace the unwrap_or_default with expect, once the
         // ExecutionResources contains all the builtins.
         // The keccak config we get from python is not always present.
@@ -345,7 +376,7 @@ pub fn get_particia_update_resources(n_visited_storage_entries: usize) -> Execut
         // TODO(Yoni, 1/5/2024): re-estimate this.
         n_steps: 32 * n_updates,
         // For each Patricia update there are two hash calculations.
-        builtin_instance_counter: hashbrown::HashMap::from([(BuiltinName::pedersen, 2 * n_updates)]),
+        builtin_instance_counter: HashMap::from([(BuiltinName::pedersen, 2 * n_updates)]),
         n_memory_holes: 0,
     }
 }
