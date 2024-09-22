@@ -75,15 +75,13 @@ cairo-felt = "0.9.1"
 #cairo-lang-sierra = "=2.7.0"
 #cairo-lang-starknet-classes = "2.7.0"
 #cairo-lang-utils = "2.7.0"
-
 #cairo-vm = { version = "=1.0.1", default-features = false }
 
-cairo-lang-casm = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-21" }
-cairo-lang-runner = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-21" }
-cairo-lang-sierra = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-21" }
-cairo-lang-starknet-classes = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-21" }
-cairo-lang-utils = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-21" }
-
+cairo-lang-casm = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-22" }
+cairo-lang-runner = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-22" }
+cairo-lang-sierra = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-22" }
+cairo-lang-starknet-classes = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-22" }
+cairo-lang-utils = { git = "https://github.com/sergey-melnychuk/cairo.git", tag = "beerus-wasm-2024-09-22" }
 cairo-vm = { git = "https://github.com/sergey-melnychuk/cairo-vm.git", tag = "beerus-wasm-2024-09-21", version = "=1.0.1", default-features = false }
 
 #cairo-lang-casm = { path = "../cairo/crates/cairo-lang-casm" }
@@ -91,7 +89,6 @@ cairo-vm = { git = "https://github.com/sergey-melnychuk/cairo-vm.git", tag = "be
 #cairo-lang-sierra = { path = "../cairo/crates/cairo-lang-sierra" }
 #cairo-lang-starknet-classes = { path = "../cairo/crates/cairo-lang-starknet-classes" }
 #cairo-lang-utils = { path = "../cairo/crates/cairo-lang-utils" }
-
 #cairo-vm = { path = "../cairo-vm/vm", version = "=1.0.1", default-features = false }
 
 camelpaste = "0.1.0"
